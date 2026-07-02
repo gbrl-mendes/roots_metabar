@@ -1,9 +1,10 @@
 ---
-title: "Mock Communities ASV analyses"
-author: "Gabriel A. Mendes", "Heron OH"
+title: "Carol Flynn's PhD Roots Metabarcoding Analyses"
+author: "Carol Flynn", "Gabriel A. Mendes", "Heron OH"
 format: html
 editor: visual
 editor_options:
+  chunk_output_type: console
 chunk_output_type: console
 ---
 
@@ -855,7 +856,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     **Case 2 — Standard library, amplicon shorter than the read length (read-through occurs).** When the amplicon is shorter than the read length, R1 reads through the entire insert and into the REV primer site, encountering it from the antisense direction — it therefore appears as `RevComp` at the 3' end of R1. Symmetrically, R2 reads through and encounters the FWD primer site as `RevComp` at its 3' end. The expected result is:
 
     | Primer  | R1                                       | R2                                       |
-    |:--------|:-----------------------------------------|:-----------------------------------------|
+    |:--------------|:----------------------------|:----------------------------|
     | **FWD** | **Forward** (good, 5' start of R1)       | **RevComp** (read-through, 3' end of R2) |
     | **REV** | **RevComp** (read-through, 3' end of R1) | **Forward** (good, 5' start of R2)       |
 
@@ -875,7 +876,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     [**Troubleshooting: diagnosing orientation anomalies**]{.underline}
 
     | Pattern observed in the plot                                                                 | Likely cause                                                                                                | Recommended fix                                                                                                                                               |
-    |:---------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+    |:------------------|:---------------------|:------------------------------|
     | FWD in R2/**Forward** (strong); REV in R1/**Forward** (strong)                               | R1/R2 file paths are swapped, or FWD/REV primer definitions are swapped in `primersnsamples`                | Swap R1↔R2 path assignments in `sampleidxtbl`, or swap FWD and REV primer entries                                                                             |
     | FWD in R1/**RevComp** (strong); REV in R2/**RevComp** (strong); near-zero **Forward** signal | Both primer sequences were entered in reverse-complement direction (e.g., copied from the antisense strand) | Replace both: `FWD <-     FWD.orient[["RevComp"]]` and `REV <- REV.orient[["RevComp"]]`                                                                       |
     | REV in R2/**RevComp** instead of R2/**Forward** (FWD signal looks correct)                   | REV primer sequence was entered as its own reverse complement                                               | Replace: `REV <-     REV.orient[["RevComp"]]` before proceeding \[\^1\]                                                                                       |

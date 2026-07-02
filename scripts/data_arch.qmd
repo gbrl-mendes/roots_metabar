@@ -1,0 +1,36 @@
+---
+title: "Carol Flynn's PhD Roots Metabarcoding Data Architecture"
+author: "Carol Flynn", "Gabriel A. Mendes", "Heron OH"
+format: html
+editor: visual
+editor_options:
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Mock Communities ASV versus MOTUs project - ASV analyses
+
+## 1. Setup & Configuration
+
+### Packages
+
+-   **Load libraries.** Import all necessary packages for data manipulation, demultiplex, ASVs inference, taxonomy assigment and data visualization.
+
+    ```{r}
+    library(tidyverse)
+    library(phyloseq)
+    library(Biostrings)
+    library(ShortRead)
+    library(dada2)
+    library(DECIPHER)
+    library(future)
+    library(viridis)
+    library(ggh4x)
+    library(furrr)
+    library(writexl)
+    library(tictoc)
+    library(BLASTr)
+    library(janitor)
+    ```
+
+### Directory Management
