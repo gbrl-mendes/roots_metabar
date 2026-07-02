@@ -31,6 +31,102 @@ chunk_output_type: console
     library(tictoc)
     library(BLASTr)
     library(janitor)
+    library(readxl)
     ```
 
 ### Directory Management
+-   **Create directory structure.** Define project paths and create the directory structure required by the pipeline.
+
+    ```{r}
+    # Project folder path  
+    prjct_path <- "/home/gabriel/projetos/roots_metabar"
+
+    # Derived paths
+    {
+      env_path <- file.path(prjct_path, "environments")
+      data_path <- file.path(prjct_path, "data")
+      pipe_libs <- file.path(data_path, "reads")
+      raw_libs <- file.path(pipe_libs, "raw")
+      paired_libs <- file.path(pipe_libs, "paired")
+      cutadapt_libs <- file.path(pipe_libs, "cutadapt")
+      qual_path <- file.path(prjct_path, "quality")
+      results_path <- file.path(prjct_path, "results")
+      figs_path <- file.path(prjct_path, "figures")
+      blast_path <- file.path(results_path, "blast")
+      swarm_path <- file.path(results_path, "swarm")
+      dmx_path <- file.path(pipe_libs, "demultiplex")
+      nochim_path <- file.path(results_path, "non_chimera")
+      tables_path <- file.path(results_path, "tables")
+      track_path <- file.path(results_path, "track_plots")
+      error_path <- file.path(results_path, "error_plot")
+    }
+
+    # Paths to be created
+    paths <- c(prjct_path, env_path, data_path, pipe_libs, raw_libs,
+               paired_libs, cutadapt_libs, qual_path, results_path,
+               figs_path, blast_path, swarm_path, dmx_path, nochim_path, 
+               tables_path, track_path, error_path)
+
+    for (dir in paths) {
+      if (dir.exists(dir)) {
+    print(paste("The folder", dir, "already exists!"))
+      } else {
+    print(paste("Creating", dir, "!" ))
+    dir.create(dir) 
+      }
+    }
+
+    # Files in the project folder
+    list.files(prjct_path)
+    ```
+    
+### Raw data aquisition
+
+-   **Upload raw metadata sheets**
+
+    ```{r}
+    # ITS Sequencing Metadata from Metagen
+    ITS_sequecing_data_tbl <- 
+      read_csv(paste0(data_path, "/", "raw/",
+                      "infos_carol_its.csv")) %>%
+      tibble()
+    
+    # RbcL Sequencing Metadata from Metagen
+    RbcL_sequecing_data_tbl <- 
+      read_csv(paste0(data_path, "/", "raw/",
+                      "infos_carol_rbcl.csv")) %>%
+      tibble()
+    
+    # Sample Metadata from Site Sampling
+    sample_metadata_tbl <- 
+      read_csv(paste0(data_path,"/", "raw/",
+                      "soil_complete.csv")) %>%
+      tibble()
+    
+    # Core Metadata
+    species_per_core_tbl <- 
+      read_excel(paste0(data_path,"/", "raw/",
+                        "species_per_core_20m.xlsx")) %>%
+      tibble()
+    ```
+
+## 2. Raw Data Pre-processing
+
+-   **Merging sequencing metadata tables**
+
+    ```{r}
+    # Sequencing metadata
+    sequencing_data_tbl <- 
+      rbind(ITS_sequecing_data_tbl,
+            RbcL_sequecing_data_tbl)
+    
+    print(sequencing_data_tbl)
+    
+    # Sample Metadata from Site Sampling
+    sample_metadata_tbl <- 
+      sample_metadata_tbl %>% 
+      select(-1) %>%
+      filter(Core_ID %in% c("L10AA")) %>% 
+      print()
+    ```
+
