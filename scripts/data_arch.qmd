@@ -1,6 +1,6 @@
 ---
 title: "Carol Flynn's PhD Roots Metabarcoding Data Architecture"
-author: "Carol Flynn", "Gabriel A. Mendes", "Heron OH"
+author: "Carol Flynn", "Gabriel A. Mendes"
 format: html
 editor: visual
 editor_options:
@@ -97,13 +97,19 @@ chunk_output_type: console
                       "infos_carol_rbcl.csv")) %>%
       tibble()
     
-    # Sample Metadata from Site Sampling
-    sample_metadata_tbl <- 
+    # Sample Metadata 
+    smpl_metadata_tbl <- 
       read_csv(paste0(data_path,"/", "raw/",
-                      "soil_complete.csv")) %>%
+                      "soil_complete_2026.csv")) %>%
       tibble()
     
-    # Core Metadata
+    # Soil Core Metadata 
+    soil_metadata_tbl <- 
+      read_csv(paste0(data_path,"/", "raw/",
+                      "soilcoredata_flynn_2026.csv")) %>%
+      tibble()
+    
+    # Associated Core Species Data
     species_per_core_tbl <- 
       read_excel(paste0(data_path,"/", "raw/",
                         "species_per_core_20m.xlsx")) %>%
@@ -112,21 +118,60 @@ chunk_output_type: console
 
 ## 2. Raw Data Pre-processing
 
--   **Merging sequencing metadata tables**
+-   **Formatting Metadata Tables**
 
     ```{r}
-    # Sequencing metadata
-    sequencing_data_tbl <- 
+    # Merging and Correcting Sequencing Metadata table
+    sequencing_data_tbl <-
       rbind(ITS_sequecing_data_tbl,
-            RbcL_sequecing_data_tbl)
+            RbcL_sequecing_data_tbl) %>%
+      mutate(Lab_ID = case_when(!str_detect(sample, "^CN") ~ 
+                                  paste0("L", str_extract(sample, "^[^.]+")),
+                                TRUE ~ NA),
+             sample = case_when(!str_detect(sample, "^CN") ~ 
+                                  paste0("L", sample),
+                                TRUE ~ sample),
+             replica = case_when(!str_detect(sample, "^CN") ~ 
+                                  str_extract(sample, "[^.]+$"),
+                                TRUE ~ NA),
+             replica = case_when(replica == "1" ~ "A",
+                                 replica == "2" ~ "B",
+                                 replica == "3" ~ "C",
+                                 TRUE ~ replica)) %>%
+      relocate(Lab_ID, pool, sample, replica)
     
-    print(sequencing_data_tbl)
+    # Merging Sample and Soil Core Metadata table
+    sample_metadata_tbl <-
+    smpl_metadata_tbl %>% 
+      mutate(Lab_ID = paste0(Core_ID, Depth_m)) %>% # Fixing the Lab_ID values 
+      select(-c(Core_ID, Depth_m)) %>% 
+      left_join(soil_metadata_tbl, by = "Lab_ID") %>% 
+      relocate(Lab_ID)
     
-    # Sample Metadata from Site Sampling
-    sample_metadata_tbl <- 
-      sample_metadata_tbl %>% 
-      select(-1) %>%
-      filter(Core_ID %in% c("L10AA")) %>% 
-      print()
+    # Formatting Associated Core Species data table
+    species_per_core_tbl_rdx <-
+      species_per_core_tbl %>%
+      mutate(Genus = word(species_name, 1),
+             Species = word(species_name, 1, 2)) %>%
+      group_by(Core_ID) %>%
+      summarise(Core_Families = paste(sort(unique(familia)), collapse = " | "),
+                Core_Genera  = paste(sort(unique(Genus)), collapse = " | "),
+                Core_Species = paste(sort(unique(Species)), collapse = " | "),
+                .groups = "drop")
+    ```
+
+-   **Merging Metadata Tables**
+
+    ```{r}
+    # Merging 
+    metadata_full_tbl <-
+      sequencing_data_tbl %>% 
+      left_join(sample_metadata_tbl, by = "Lab_ID") %>% 
+      left_join(species_per_core_tbl_rdx, by = "Core_ID") %>% 
+      relocate(Core_ID, Lab_ID, sample, replica)
+    
+    # Saving
+    write.csv(metadata_full_tbl,
+      file = paste0(data_path, paste0("/metadata-full-tbl_", Sys.Date(), ".csv")))
     ```
 
