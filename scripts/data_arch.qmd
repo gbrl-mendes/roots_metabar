@@ -130,14 +130,15 @@ chunk_output_type: console
                                 TRUE ~ NA),
              sample = case_when(!str_detect(sample, "^CN") ~ 
                                   paste0("L", sample),
-                                TRUE ~ sample),
+                                TRUE ~ paste0(CN, "_", pool)),
              replica = case_when(!str_detect(sample, "^CN") ~ 
                                   str_extract(sample, "[^.]+$"),
                                 TRUE ~ NA),
              replica = case_when(replica == "1" ~ "A",
                                  replica == "2" ~ "B",
                                  replica == "3" ~ "C",
-                                 TRUE ~ replica)) %>%
+                                 TRUE ~ replica),
+             obs = paste(forward_tag_name, reverse_tag_name, sep = "_")) %>%
       relocate(Lab_ID, pool, sample, replica)
     
     # Merging Sample and Soil Core Metadata table
@@ -157,6 +158,7 @@ chunk_output_type: console
       summarise(Core_Families = paste(sort(unique(familia)), collapse = " | "),
                 Core_Genera  = paste(sort(unique(Genus)), collapse = " | "),
                 Core_Species = paste(sort(unique(Species)), collapse = " | "),
+                Core_Abundance = paste(sort(unique(abundance)), collapse = " | "),
                 .groups = "drop")
     ```
 
@@ -164,14 +166,74 @@ chunk_output_type: console
 
     ```{r}
     # Merging 
-    metadata_full_tbl <-
+    primers_n_samples <-
       sequencing_data_tbl %>% 
       left_join(sample_metadata_tbl, by = "Lab_ID") %>% 
       left_join(species_per_core_tbl_rdx, by = "Core_ID") %>% 
-      relocate(Core_ID, Lab_ID, sample, replica)
+      relocate(Core_ID, Lab_ID, sample, replica) %>% 
+      mutate(`Researcher` = "Carol Flynn",
+             `Run` = "mtg_jun26",
+             `Project` = "roots_metabar",
+             `Primer` = str_extract(forward_tag_name, "^[^-]*"),
+             `Type` = case_when(str_detect(sample, "^CN") ~ "PCR Control", 
+                                TRUE ~ "Sample"),
+             `Metadata 2` = Lab_ID,
+             lib = sample,
+             `Extraction control` = NA,
+             `PCR control` = case_when(!str_detect(sample, "^CN") ~ CN, 
+                                TRUE ~ NA),
+             `Filtration control` = NA,
+             Lib = sample,
+             `Forward_sequence` = paste(forward_tag, forward_primer),
+             `Reverse_sequence`= paste(reverse_tag, reverse_primer),
+             `Multiplexed data path` = "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed",
+             `Demultiplexed data path` = "/home/gabriel/projetos/roots_metabar/data/reads/demultiplex") %>% 
+      rename(Lab_ID = "Sample",
+             sample = "Unique_File_name",
+             Core_ID = "Metadata 1",
+             replica = "Metadata 3",
+             pool = "Metadata 4",
+             `pH-H2O` = "Metadata 5",
+             P = "Metadata 6",
+             K = "Metadata 7",
+             `Ca2+` = "Metadata 8",
+             `Mg2+` = "Metadata 9",
+             `Al3+` = "Metadata 10",
+             MO = "Metadata 11",
+             `P-Rem` = "Metadata 12",
+             `mean_height_5m` = "Metadata 13",
+             `max_height_5m` = "Metadata 14",
+             `mean_height_10m` = "Metadata 15",
+             `max_height_10m` = "Metadata 16",
+             `n_bigtrees_20m` = "Metadata 17",
+             `min_dist_big_m` = "Metadata 18",
+             Date = "Metadata 19",
+             Line = "Metadata 20",
+             Transect = "Metadata 21",
+             Zone = "Metadata 22",
+             `Depth_m` = "Metadata 23",
+             TransectGroup = "Metadata 24",
+             `Cumulative_Root_g` = "Metadata 25",
+             `Gravimetric_WC` = "Metadata 26",
+             `Root_Density_g_m3` = "Metadata 27",
+             `Core_Families` = "Metadata 28",
+             `Core_Genera` = "Metadata 29",
+             `Core_Species` = "Metadata 30",
+             `Core_Abundance` = "Metadata 31",
+             `forward_tag_name` = "Index name FWD",
+             `Forward_sequence` = "Sequence FWD",
+             `reverse_tag_name` = "Index name REV",
+             `Reverse_sequence` = "Sequence REV") %>% 
+      select(-c(CN)) %>% 
+      relocate(Researcher, Run, Project, Primer, Sample, Unique_File_name, Type,
+               num_range("Metadata ", 1:31), obs, `Extraction control`, `PCR control`, 
+               `Filtration control`, Lib, `Index name FWD`, `Sequence FWD`,
+               `Index name REV`, `Sequence REV`, `Multiplexed data path`,
+               `Demultiplexed data path`)
+    
     
     # Saving
-    write.csv(metadata_full_tbl,
-      file = paste0(data_path, paste0("/metadata-full-tbl_", Sys.Date(), ".csv")))
+    write.csv(primers_n_samples,
+      file = paste0(data_path, paste0("/roots_metabar-primers_n_samples-", Sys.Date(), ".csv")))
     ```
 
