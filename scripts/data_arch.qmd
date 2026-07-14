@@ -188,10 +188,11 @@ chunk_output_type: console
              `PCR control` = case_when(!str_detect(sample, "^CN") ~ CN, 
                                 TRUE ~ NA),
              `Filtration control` = NA,
-             Lib = sample,
+             Lib = Primer,
              `Forward_sequence` = str_replace_all(paste(forward_tag, forward_primer), " ", ""),
              `Reverse_sequence`= str_replace_all(paste(reverse_tag, reverse_primer), " ", ""),
-             `Multiplexed data path` = "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed",
+             `Multiplexed data path` = case_when(Primer == "ITS2" ~ "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/ITS", 
+                                TRUE ~ "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/rbcL"),
              `Demultiplexed data path` = "/home/gabriel/projetos/roots_metabar/data/reads/demultiplex") %>% 
       rename(Lab_ID = "Sample",
              sample = "Unique_File_name",
