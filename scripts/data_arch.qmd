@@ -94,7 +94,7 @@ chunk_output_type: console
     # RbcL Sequencing Metadata from Metagen
     RbcL_sequecing_data_tbl <- 
       read_csv(paste0(data_path, "/", "raw/",
-                      "infos_carol_rbcl.csv")) %>%
+                      "infos_carol_rbcl.csv"))%>%
       tibble()
     
     # Sample Metadata 
@@ -123,7 +123,7 @@ chunk_output_type: console
     ```{r}
     # Merging and Correcting Sequencing Metadata table
     sequencing_data_tbl <-
-      rbind(ITS_sequecing_data_tbl,
+      rbind(ITS_sequecing_data_tbl, # unindo por linhas
             RbcL_sequecing_data_tbl) %>%
       mutate(Lab_ID = case_when(!str_detect(sample, "^CN") ~ 
                                   paste0("L", str_extract(sample, "^[^.]+")),
@@ -139,13 +139,13 @@ chunk_output_type: console
                                  replica == "3" ~ "C",
                                  TRUE ~ replica),
              obs = paste(forward_tag_name, reverse_tag_name, sep = "_")) %>%
-      relocate(Lab_ID, pool, sample, replica)
+      relocate(Lab_ID, pool, sample, replica, obs)
     
     # Merging Sample and Soil Core Metadata table
     sample_metadata_tbl <-
     smpl_metadata_tbl %>% 
-      mutate(Lab_ID = paste0(Core_ID, Depth_m)) %>% # Fixing the Lab_ID values 
-      select(-c(Core_ID, Depth_m)) %>% 
+      mutate(Lab_ID = paste0(Core_ID, Depth_m)) %>% 
+      select(-c(Core_ID, Depth_m)) %>%
       left_join(soil_metadata_tbl, by = "Lab_ID") %>% 
       relocate(Lab_ID)
     
@@ -155,11 +155,11 @@ chunk_output_type: console
       mutate(Genus = word(species_name, 1),
              Species = word(species_name, 1, 2)) %>%
       group_by(Core_ID) %>%
-      summarise(Core_Families = paste(sort(unique(familia)), collapse = " | "),
-                Core_Genera  = paste(sort(unique(Genus)), collapse = " | "),
-                Core_Species = paste(sort(unique(Species)), collapse = " | "),
-                Core_Abundance = paste(sort(unique(abundance)), collapse = " | "),
-                .groups = "drop")
+      summarise(Core_Families = paste(unique(familia), collapse = " | "),
+                Core_Genera  = paste(unique(Genus), collapse = " | "),
+                Core_Species = paste(unique(Species), collapse = " | "),
+                Core_Abundance = paste(unique(abundance), collapse = " | ")) %>% 
+      ungroup()
     ```
 
 -   **Merging Metadata Tables**
@@ -168,24 +168,29 @@ chunk_output_type: console
     # Merging 
     primers_n_samples <-
       sequencing_data_tbl %>% 
-      left_join(sample_metadata_tbl, by = "Lab_ID") %>% 
+      left_join(sample_metadata_tbl, by = "Lab_ID") %>%
       left_join(species_per_core_tbl_rdx, by = "Core_ID") %>% 
       relocate(Core_ID, Lab_ID, sample, replica) %>% 
-      mutate(`Researcher` = "Carol Flynn",
-             `Run` = "mtg_jun26",
-             `Project` = "roots_metabar",
-             `Primer` = str_extract(forward_tag_name, "^[^-]*"),
-             `Type` = case_when(str_detect(sample, "^CN") ~ "PCR Control", 
-                                TRUE ~ "Sample"),
-             `Metadata 2` = Lab_ID,
-             lib = sample,
+      mutate(Researcher = "Carol Flynn",
+             Run = "mtg_jun26",
+             Project = "roots_metabar",
+             Primer = str_extract(forward_tag_name, "^[^-]*"),
+             Lab_ID = case_when(!str_detect(Lab_ID, "^CN") ~ paste0(Primer, "_", Lab_ID), 
+                                TRUE ~ Lab_ID),
+             sample = case_when(!str_detect(sample, "^CN") ~ paste0(Primer, "_", sample), 
+                                TRUE ~ sample),
+             Type = case_when(str_detect(sample, "^CN") ~ "PCR Control", 
+                                TRUE ~ "sample"),
+             `Metadata 2` = case_when(!str_detect(Lab_ID, "^CN") ~
+                                      str_extract(Lab_ID, "(?<=_L).*"),
+                                      TRUE ~ Lab_ID),
              `Extraction control` = NA,
              `PCR control` = case_when(!str_detect(sample, "^CN") ~ CN, 
                                 TRUE ~ NA),
              `Filtration control` = NA,
              Lib = sample,
-             `Forward_sequence` = paste(forward_tag, forward_primer),
-             `Reverse_sequence`= paste(reverse_tag, reverse_primer),
+             `Forward_sequence` = str_replace_all(paste(forward_tag, forward_primer), " ", ""),
+             `Reverse_sequence`= str_replace_all(paste(reverse_tag, reverse_primer), " ", ""),
              `Multiplexed data path` = "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed",
              `Demultiplexed data path` = "/home/gabriel/projetos/roots_metabar/data/reads/demultiplex") %>% 
       rename(Lab_ID = "Sample",
@@ -224,16 +229,16 @@ chunk_output_type: console
              `Forward_sequence` = "Sequence FWD",
              `reverse_tag_name` = "Index name REV",
              `Reverse_sequence` = "Sequence REV") %>% 
-      select(-c(CN)) %>% 
+      select(-c(CN, forward_tag, forward_primer, reverse_tag, reverse_primer, Root_Biomass_g_m2)) %>% 
       relocate(Researcher, Run, Project, Primer, Sample, Unique_File_name, Type,
                num_range("Metadata ", 1:31), obs, `Extraction control`, `PCR control`, 
                `Filtration control`, Lib, `Index name FWD`, `Sequence FWD`,
                `Index name REV`, `Sequence REV`, `Multiplexed data path`,
                `Demultiplexed data path`)
     
-    
     # Saving
     write.csv(primers_n_samples,
-      file = paste0(data_path, paste0("/roots_metabar-primers_n_samples-", Sys.Date(), ".csv")))
+      file = paste0(data_path, paste0("/roots_metabar-primers_n_samples-", Sys.Date(), ".csv")),
+      row.names = FALSE)
     ```
 
