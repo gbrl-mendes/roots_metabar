@@ -39,11 +39,11 @@ chunk_output_type: console
 
     ```{r}
     # Project folder path  
-    prjct_path <- "/home/gabriel/projetos/mock_pipelines"
+    prjct_path <- "/home/gabriel/projetos/roots_metabar"
 
     # Derived paths
     {
-      env_path <- file.path(prjct_path, "environments")
+      env_path <- file.path(prjct_path, "environment")
       data_path <- file.path(prjct_path, "data")
       pipe_libs <- file.path(data_path, "reads")
       raw_libs <- file.path(pipe_libs, "raw")
@@ -105,9 +105,7 @@ After filling in the table, save it as .csv an place it on the data folder, insi
 -   **Load primers, indexes and samples table.** Reads the configuration CSV containing sample metadata, primers, indexes, and project assignments.
 
     ```{r}
-    primers_n_samples <- 
-      # readr::read_csv(file = file.path(prjct_path, "data", "mock_primer_n_samples.csv"))
-      readr::read_csv(file = file.path(prjct_path, "data", "teste_primers_n_samples.csv"))
+    primers_n_samples <- readr::read_csv(file = file.path(prjct_path, "data", "roots_metabar-primers_n_samples-2026-07-14.csv"))
 
     # Show if the primer_n_samples table was loaded successfully
     primers_n_samples %>% 
@@ -193,13 +191,52 @@ The second phase of the pipeline focuses on the pre-processing and diagnostics o
     for id in $(cat ids.txt); \ do bs download dataset --id $id -o data/reads/raw --extension=fastq.gz; done
     ```
 
+-   **Concatenando as reads.** A funcao `dmx_metabar2` foi desenvolvida para que recebesse apenas um par R1/R2 para cada biblioteca sequenciada. Biblioteca sendo um conjunto arbitrariamente definido de arquivos. No nosso caso, uma biblioteca seria a ITS2 e a outra seria a rbcL. Porem, para cada um desses primers, ha 3 conjuntos de pares R1/R2, ja que devido ao elevado numero de amostras, em vez de apenas 1, tiveram que ser criados 3 pools. Portanto, para lidar com essa situacao, cada conjunto de reads de cada primer sera concatenado, para que no final tenhamos apenas 2 arquivos para cada biblioteca:
+
+```{bash}
+    # Navigate to raw demultiplex files folder 
+    $ cd /home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/
+    
+    # ITS: Unindo os arquivos R1 na ordem exata (Pool 1, 2, 3)
+    $ cat CITS1_S1_L001_R1_001.fastq.gz CITS2_S2_L001_R1_001.fastq.gz CITS3_S3_L001_R1_001.fastq.gz > ITS_combined_R1.fastq.gz
+
+    # ITS: Unindo os arquivos R2 na ordem exata (Pool 1, 2, 3)
+    $ cat CITS1_S1_L001_R2_001.fastq.gz CITS2_S2_L001_R2_001.fastq.gz CITS3_S3_L001_R2_001.fastq.gz > ITS_combined_R2.fastq.gz
+
+    # rbcL: Unindo os arquivos R1 na ordem exata (Pool 1, 2, 3)
+    $ cat CRB1_S1_L001_R1_001.fastq.gz CRB2_S2_L001_R1_001.fastq.gz CRB3_S3_L001_R1_001.fastq.gz > rbcL_combined_R1.fastq.gz
+    
+    # rbcL: Unindo os arquivos R2 na ordem exata (Pool 1, 2, 3)
+    $ cat CRB1_S1_L001_R2_001.fastq.gz CRB2_S2_L001_R2_001.fastq.gz CRB3_S3_L001_R2_001.fastq.gz > rbcL_combined_R2.fastq.gz
+    ```
+
+-   **Criando os diretorios separados.** Pelo funcionamento do cutadapt, os pares R1/R2 sao acessados a partir de diretorios, e nao a partir dos nomes dos arquivos R1/R2. Portanto, para cada biblioteca, deve haver apenas 1 par R1/R2 dentro do diretorio. Entao cria-se pastas separadas para cada um dos conjuntos paired-end: ITS e rbcL:
+
+```{bash}
+    # Navigate to raw demultiplex files folder 
+    $ cd /home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/
+    
+    # Criar diretorio ITS  
+    $ mkdir ITS
+    
+    # Criar diretorio rbcL  
+    $ mkdir rbcL
+    
+    # Mover arquivos ITS para seu respectivo diretorio
+    $ mv ITS_* ITS/
+    
+    # Mover arquivos ITS para seu respectivo diretorio
+    $ mv rbcL_* rbcL/
+    ```
+
+    Lembrando que isso deve estar registrado na primers_n_samples!
+
 ### Demultiplexing
 
 Demultiplexing assigns each read pair to its corresponding sample based on the unique combination of forward and reverse index sequences flanking the amplicon. This pipeline uses a custom R function, `dmx_metabar2`, which wraps [Cutadapt](https://cutadapt.readthedocs.io) to perform combinatorial paired-end demultiplexing. The function supports three library configurations, which must be selected according to how your sequencing run was prepared:
 
 -   **Conventional (single orientation):** All read pairs have the forward index on R1 and the reverse index on R2. Set `mixed_orientation = FALSE`.
--   **Dual mixed-orientation, separated output:** Approximately half the read pairs carry the forward index on R1 and the other half carry it on R2. The function separates them into `/standard/` and `/flipped/` output folders. Set `mixed_orientation = TRUE`, `merge_mixed = FALSE`. **This is the approach recommended by [B. Callahan](https://github.com/benjjneb/dada2/issues/938) for mixed-orientation data**, as it preserves the integrity of DADA2's error model by ensuring all R1 reads within a set begin with the same primer.
--   **Dual mixed-orientation, merged output:** Same as above, but standard and flipped pairs are concatenated into a single combined file per sample using `Rfastp::catfastq`. Set `mixed_orientation = TRUE, merge_mixed = TRUE`. This is simpler but requires careful handling downstream, as R1 files will contain reads beginning with both primers.
+-   **Dual mixed-orientation, separated output:** Approximately half the read pairs carry the forward index on R1 and the other half carry it on R2. The function automatically separates them into `/standard/` and `/flipped/` output folders. Set `mixed_orientation = TRUE`.
 
 If you are unsure which configuration applies to your data, run the **Primer Detection Analysis** section first (Section 2.x). A mixed-orientation library will show roughly equal counts of both primers in both R1 and R2 files in the `Forward` orientation column of the primer diagnostic plot.
 
@@ -235,7 +272,7 @@ The parameters below are exposed as arguments in `dmx_metabar2` so they can be t
 
 -   **`cut_action`** **(`--action`)** — What Cutadapt does with the matched index sequence after assignment. `"retain"` keeps the index in the read after trimming any flanking unmatched sequence, which is appropriate when a downstream Cutadapt step (e.g., primer removal) will handle full excision of both index and primer in a single pass. Use `"trim"` if you want the index removed immediately and no downstream trimming step will be applied. Note that `--action=retain` is incompatible with Cutadapt's `--times` option.
 
-[**Checking demultiplexing efficiency**]{.underline}
+[**Checking demultiplex efficiency**]{.underline}
 
 After running, inspect the PDF plot and the log file generated by `dmx_metabar2` in the output folder. The plot shows the number of read pairs assigned to each sample. Key things to look for:
 
@@ -245,11 +282,13 @@ After running, inspect the PDF plot and the log file generated by `dmx_metabar2`
 
 ------------------------------------------------------------------------
 
--   **Run demultiplexing function.** Iterates over libraries in the configuration table (`primers_n_samples`) and applies the custom `dmx_metabar2` function to split samples using the index information.
+-   **Run demultiplex function.** Iterates over libraries in the configuration table (`primers_n_samples`) and applies the custom `dmx_metabar2` function to split samples using the index information.
 
     ```{r}
     # Separate libraries
     all_Libs <- primers_n_samples$Lib %>% BiocGenerics::unique()
+
+    print(all_Libs)
 
     # Loop over projects and run demultiplexing
     for (LIB in all_Libs) {
@@ -259,8 +298,8 @@ After running, inspect the PDF plot and the log file generated by `dmx_metabar2`
         dplyr::filter(Lib == LIB)
       
       # Extract directories (using unique to get the single value for this project)
-      raw_dir <- BiocGenerics::unique(LIB_data$`Undemultiplexed path`)
-      out_dir <- BiocGenerics::unique(LIB_data$`Raw data path`)
+      raw_dir <- BiocGenerics::unique(LIB_data$`Multiplexed data path`)
+      out_dir <- BiocGenerics::unique(LIB_data$`Demultiplexed data path`)
       
       # Run demultiplexing
       tictoc::tic(paste0("Demultiplexing raw data"))
@@ -274,9 +313,9 @@ After running, inspect the PDF plot and the log file generated by `dmx_metabar2`
                   Unique_File_name = LIB_data$Unique_File_name,
                   primers = LIB_data$Primer,
                   samples_names = LIB_data$Sample,
-                  idxs_FWD_seqs = LIB_data$`Index sequence FWD`,
+                  idxs_FWD_seqs = LIB_data$`Sequence FWD`,
                   idxs_FWD_names = LIB_data$`Index name FWD`,
-                  idxs_REV_seqs = LIB_data$`Index sequence REV`,
+                  idxs_REV_seqs = LIB_data$`Sequence REV`,
                   idxs_REV_names = LIB_data$`Index name REV`,
                   cut_threads = 60, # Number of threads
                   mixed_orientation = TRUE, # Dual-mixed Library
@@ -301,7 +340,7 @@ The raw sequencing reads are assessed for overall quality before any processing 
 
     ```{r}
     read_files <- primers_n_samples %>%
-      dplyr::mutate(Read_file_pattern = file.path(`Raw data path`, paste0(Unique_File_name, "*"))) %>%
+      dplyr::mutate(Read_file_pattern = file.path(`Demultiplexed data path`, paste0(Unique_File_name, "*"))) %>%
       dplyr::pull(Read_file_pattern) %>%
       Sys.glob() %>%
       normalizePath() %>%
@@ -856,7 +895,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     **Case 2 — Standard library, amplicon shorter than the read length (read-through occurs).** When the amplicon is shorter than the read length, R1 reads through the entire insert and into the REV primer site, encountering it from the antisense direction — it therefore appears as `RevComp` at the 3' end of R1. Symmetrically, R2 reads through and encounters the FWD primer site as `RevComp` at its 3' end. The expected result is:
 
     | Primer  | R1                                       | R2                                       |
-    |:--------------|:----------------------------|:----------------------------|
+    |:-----------------|:--------------------------|:--------------------------|
     | **FWD** | **Forward** (good, 5' start of R1)       | **RevComp** (read-through, 3' end of R2) |
     | **REV** | **RevComp** (read-through, 3' end of R1) | **Forward** (good, 5' start of R2)       |
 
