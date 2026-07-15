@@ -175,28 +175,26 @@ chunk_output_type: console
              Run = "mtg_jun26",
              Project = "roots_metabar",
              Primer = str_extract(forward_tag_name, "^[^-]*"),
-             Lab_ID = case_when(!str_detect(Lab_ID, "^CN") ~ paste0(Primer, "_", Lab_ID), 
-                                TRUE ~ Lab_ID),
-             sample = case_when(!str_detect(sample, "^CN") ~ paste0(Primer, "_", sample), 
+             Sample = case_when(!str_detect(Lab_ID, "^CN") ~ paste0(Primer, "_", Lab_ID),
                                 TRUE ~ sample),
+             Unique_File_name = case_when(!str_detect(sample, "^CN") ~ paste0(Primer, "_", sample),
+                                          TRUE ~ sample),
              Type = case_when(str_detect(sample, "^CN") ~ "PCR Control", 
                                 TRUE ~ "sample"),
-             `Metadata 2` = case_when(!str_detect(Lab_ID, "^CN") ~
-                                      str_extract(Lab_ID, "(?<=_L).*"),
-                                      TRUE ~ Lab_ID),
              `Extraction control` = NA,
              `PCR control` = case_when(!str_detect(sample, "^CN") ~ CN, 
                                 TRUE ~ NA),
              `Filtration control` = NA,
-             Lib = Primer,
+             Lib = pool,
              `Forward_sequence` = str_replace_all(paste(forward_tag, forward_primer), " ", ""),
              `Reverse_sequence`= str_replace_all(paste(reverse_tag, reverse_primer), " ", ""),
-             `Multiplexed data path` = case_when(Primer == "ITS2" ~ "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/ITS", 
-                                TRUE ~ "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/rbcL"),
+             `Multiplexed data path` = case_when(Primer == "ITS2" ~ "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed", 
+                                TRUE ~ "/home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed"),
              `Demultiplexed data path` = "/home/gabriel/projetos/roots_metabar/data/reads/demultiplex") %>% 
-      rename(Lab_ID = "Sample",
-             sample = "Unique_File_name",
+      rename(
              Core_ID = "Metadata 1",
+             Lab_ID = "Metadata 2",
+             sample = "Metadata 32",
              replica = "Metadata 3",
              pool = "Metadata 4",
              `pH-H2O` = "Metadata 5",
@@ -232,7 +230,7 @@ chunk_output_type: console
              `Reverse_sequence` = "Sequence REV") %>% 
       select(-c(CN, forward_tag, forward_primer, reverse_tag, reverse_primer, Root_Biomass_g_m2)) %>% 
       relocate(Researcher, Run, Project, Primer, Sample, Unique_File_name, Type,
-               num_range("Metadata ", 1:31), obs, `Extraction control`, `PCR control`, 
+               num_range("Metadata ", 1:32), obs, `Extraction control`, `PCR control`, 
                `Filtration control`, Lib, `Index name FWD`, `Sequence FWD`,
                `Index name REV`, `Sequence REV`, `Multiplexed data path`,
                `Demultiplexed data path`)
@@ -242,4 +240,3 @@ chunk_output_type: console
       file = paste0(data_path, paste0("/roots_metabar-primers_n_samples-", Sys.Date(), ".csv")),
       row.names = FALSE)
     ```
-
