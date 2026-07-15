@@ -93,7 +93,7 @@ chunk_output_type: console
 
     ```{r}
     # Demultiplex custom function
-    source("/home/gabriel/functions/v5_dmx_metabar2.R")
+    source("/home/gabriel/functions/v6_dmx_metabar2.R")
     ```
 
 ### Load Samples table
@@ -105,7 +105,7 @@ After filling in the table, save it as .csv an place it on the data folder, insi
 -   **Load primers, indexes and samples table.** Reads the configuration CSV containing sample metadata, primers, indexes, and project assignments.
 
     ```{r}
-    primers_n_samples <- readr::read_csv(file = file.path(prjct_path, "data", "roots_metabar-primers_n_samples-2026-07-14.csv"))
+    primers_n_samples <- readr::read_csv(file = file.path(prjct_path, "data", "roots_metabar-primers_n_samples-2026-07-15.csv"))
 
     # Show if the primer_n_samples table was loaded successfully
     primers_n_samples %>% 
@@ -191,49 +191,39 @@ The second phase of the pipeline focuses on the pre-processing and diagnostics o
     for id in $(cat ids.txt); \ do bs download dataset --id $id -o data/reads/raw --extension=fastq.gz; done
     ```
 
--   **Concatenando as reads.** A funcao `dmx_metabar2` foi desenvolvida para que recebesse apenas um par R1/R2 para cada biblioteca sequenciada. Biblioteca sendo um conjunto arbitrariamente definido de arquivos. No nosso caso, uma biblioteca seria a ITS2 e a outra seria a rbcL. Porem, para cada um desses primers, ha 3 conjuntos de pares R1/R2, ja que devido ao elevado numero de amostras, em vez de apenas 1, tiveram que ser criados 3 pools. Portanto, para lidar com essa situacao, cada conjunto de reads de cada primer sera concatenado, para que no final tenhamos apenas 2 arquivos para cada biblioteca:
+### Preparing multiplexed libraries
+
+`dmx_metabar()` accepts exactly one paired-end multiplexed FASTQ input per execution: one R1 file and one R2 file. A library is therefore defined here as a single raw paired-end dataset associated with one primer.
+
+Each value in the `Lib` column of `primers_n_samples` must contain exactly one value in the `Primer` column. If one physical sequencing run contains multiple primer sets, create separate library entries in `primers_n_samples`, one per primer, and ensure that each entry points to its corresponding raw R1/R2 pair.
+
+If a primer library was sequenced across multiple pools or lanes, concatenate all R1 files in the same order used for the corresponding R2 files. The final concatenated R1 and R2 files must be placed in a library-specific directory containing no other FASTQ files. This is required because `dmx_metabar()` validates that each library directory contains exactly one R1 and one R2 multiplexed FASTQ file.
+
+For example, if ITS2 was sequenced in three pools:
 
 ```{bash}
-    # Navigate to raw demultiplex files folder 
-    $ cd /home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/
-    
-    # ITS: Unindo os arquivos R1 na ordem exata (Pool 1, 2, 3)
-    $ cat CITS1_S1_L001_R1_001.fastq.gz CITS2_S2_L001_R1_001.fastq.gz CITS3_S3_L001_R1_001.fastq.gz > ITS_combined_R1.fastq.gz
+cd /home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed
 
-    # ITS: Unindo os arquivos R2 na ordem exata (Pool 1, 2, 3)
-    $ cat CITS1_S1_L001_R2_001.fastq.gz CITS2_S2_L001_R2_001.fastq.gz CITS3_S3_L001_R2_001.fastq.gz > ITS_combined_R2.fastq.gz
+mkdir -p ITS2
 
-    # rbcL: Unindo os arquivos R1 na ordem exata (Pool 1, 2, 3)
-    $ cat CRB1_S1_L001_R1_001.fastq.gz CRB2_S2_L001_R1_001.fastq.gz CRB3_S3_L001_R1_001.fastq.gz > rbcL_combined_R1.fastq.gz
-    
-    # rbcL: Unindo os arquivos R2 na ordem exata (Pool 1, 2, 3)
-    $ cat CRB1_S1_L001_R2_001.fastq.gz CRB2_S2_L001_R2_001.fastq.gz CRB3_S3_L001_R2_001.fastq.gz > rbcL_combined_R2.fastq.gz
-    ```
+cat \
+  ITS2_pool1_R1.fastq.gz \
+  ITS2_pool2_R1.fastq.gz \
+  ITS2_pool3_R1.fastq.gz \
+  > ITS2/ITS2_combined_R1.fastq.gz
 
--   **Criando os diretorios separados.** Pelo funcionamento do cutadapt, os pares R1/R2 sao acessados a partir de diretorios, e nao a partir dos nomes dos arquivos R1/R2. Portanto, para cada biblioteca, deve haver apenas 1 par R1/R2 dentro do diretorio. Entao cria-se pastas separadas para cada um dos conjuntos paired-end: ITS e rbcL:
+cat \
+  ITS2_pool1_R2.fastq.gz \
+  ITS2_pool2_R2.fastq.gz \
+  ITS2_pool3_R2.fastq.gz \
+  > ITS2/ITS2_combined_R2.fastq.gz
+```
 
-```{bash}
-    # Navigate to raw demultiplex files folder 
-    $ cd /home/gabriel/projetos/roots_metabar/data/reads/raw/multiplexed/
-    
-    # Criar diretorio ITS  
-    $ mkdir ITS
-    
-    # Criar diretorio rbcL  
-    $ mkdir rbcL
-    
-    # Mover arquivos ITS para seu respectivo diretorio
-    $ mv ITS_* ITS/
-    
-    # Mover arquivos ITS para seu respectivo diretorio
-    $ mv rbcL_* rbcL/
-    ```
-
-    Lembrando que isso deve estar registrado na primers_n_samples!
+The same procedure must be repeated independently for every primer library. The paths to these library-specific directories must be recorded in the `Multiplexed data path` column of `primers_n_samples`.
 
 ### Demultiplexing
 
-Demultiplexing assigns each read pair to its corresponding sample based on the unique combination of forward and reverse index sequences flanking the amplicon. This pipeline uses a custom R function, `dmx_metabar2`, which wraps [Cutadapt](https://cutadapt.readthedocs.io) to perform combinatorial paired-end demultiplexing. The function supports three library configurations, which must be selected according to how your sequencing run was prepared:
+Demultiplexing assigns each read pair to its corresponding sample based on the unique combination of forward and reverse index sequences flanking the amplicon. This pipeline uses a custom R function, `dmx_metabar2`, which wraps [Cutadapt](https://cutadapt.readthedocs.io) to perform combinatorial paired-end demultiplexing. The function supports two library configurations, which must be selected according to how your sequencing run was prepared:
 
 -   **Conventional (single orientation):** All read pairs have the forward index on R1 and the reverse index on R2. Set `mixed_orientation = FALSE`.
 -   **Dual mixed-orientation, separated output:** Approximately half the read pairs carry the forward index on R1 and the other half carry it on R2. The function automatically separates them into `/standard/` and `/flipped/` output folders. Set `mixed_orientation = TRUE`.
@@ -242,7 +232,11 @@ If you are unsure which configuration applies to your data, run the **Primer Det
 
 [**How `dmx_metabar2` works**]{.underline}
 
-The function reads index names and sequences directly from the `primers_n_samples` configuration table and builds a FASTA file containing all unique index sequences, stripping any N-padding from their 5′ end before writing. This FASTA is passed to Cutadapt via `-g file:` and `-G file:`, activating **combinatorial demultiplexing**: Cutadapt searches for every possible forward × reverse index combination across both R1 and R2 simultaneously, writing one output file pair per combination found. The placeholder `{name1}--{name2}` in the output path encodes the orientation of each matched pair, which the function uses to route files into the correct output folder (`/standard/`, `/flipped/`, or `/combined/`).
+The function removes leading `N` padding from index sequences, retains the first `query_size` bases, writes separate FWD and REV FASTA files, and passes them to Cutadapt with `-g` and `-G`. Cutadapt then searches all valid FWD/REV index combinations and writes one paired-end output per detected combination.
+
+When `mixed_orientation = TRUE`, the function passes `--revcomp` to Cutadapt so that reverse-complement matches are considered during index assignment. Outputs are stored as one R1/R2 pair per sample; the function does not create separate `standard`, `flipped`, or `combined` directories.
+
+The function records every expected sample in an audit table. Samples that receive no complete paired output are retained in the audit report with an explicit status rather than silently disappearing from the results.
 
 [**Cutadapt parameters**]{.underline}
 
@@ -272,30 +266,80 @@ The parameters below are exposed as arguments in `dmx_metabar2` so they can be t
 
 -   **`cut_action`** **(`--action`)** — What Cutadapt does with the matched index sequence after assignment. `"retain"` keeps the index in the read after trimming any flanking unmatched sequence, which is appropriate when a downstream Cutadapt step (e.g., primer removal) will handle full excision of both index and primer in a single pass. Use `"trim"` if you want the index removed immediately and no downstream trimming step will be applied. Note that `--action=retain` is incompatible with Cutadapt's `--times` option.
 
-[**Checking demultiplex efficiency**]{.underline}
+[**Outputs and demultiplexing audit**]{.underline}
 
-After running, inspect the PDF plot and the log file generated by `dmx_metabar2` in the output folder. The plot shows the number of read pairs assigned to each sample. Key things to look for:
+For each execution, `dmx_metabar()` creates a structured output directory inside the library-specific `Demultiplexed data path`:
 
--   **Samples with zero or very few reads** may indicate a mismatch between the index listed in `primers_n_samples` and what was actually sequenced. Cross-check with the sequencing center's sample sheet.
--   **Total demultiplexed proportion** (reported in the log and plot caption): values below \~70% of raw reads suggest that index sequences are wrong, `query_size` is too large, or the run has high index-hopping.
--   **Unequal read depth across samples** is expected to some degree; samples with fewer than \~5,000 read pairs should be flagged for potential exclusion before ASV inference.
+```{text}
+<Demultiplexed data path>/
+├── demultiplexed_fastq/
+│   ├── <Unique_File_name>__R1.fastq.gz
+│   └── <Unique_File_name>__R2.fastq.gz
+├── audit/
+│   ├── <execution_id>__sample_audit.csv
+│   └── <execution_id>__run_summary.csv
+├── logs/
+│   └── <execution_id>__cutadapt.log
+├── plots/
+│   └── <execution_id>__demultiplexing_reads_page-<n>.pdf
+└── work/
+└── <execution_id>/
+    ├── cutadapt_output/
+    └── indexes/
+```
+
+The `demultiplexed_fastq/` directory contains only final sample-level FASTQ files and is the directory that must be used by all downstream quality-control, primer-removal, and DADA2 steps.
+
+The `audit/` directory contains two CSV files. The sample audit reports sample identifiers, index pairs, expected and observed output paths, output status, read-pair counts, and output sizes. The run summary reports raw and demultiplexed read-pair totals, sizes, retention percentages, sample counts, and paths to the associated log and audit files.
+
+Possible sample-level statuses include:
+
+-   `moved`: a complete R1/R2 pair was produced and moved to `demultiplexed_fastq/`;
+-   `zero_reads_or_not_written`: Cutadapt did not produce a complete output pair for that index combination;
+-   `missing_R1` or `missing_R2`: only one member of the expected read pair was found;
+-   `move_failed`: output files were found but could not be moved to their final destination.
+
+The pipeline must not proceed if the audit table contains `missing_R1`, `missing_R2`, or `move_failed` records. Samples with `zero_reads_or_not_written` can remain documented as zero-read samples, but they should be excluded from downstream FASTQ-based analyses.
+
+The function reports raw and demultiplexed size in MB, raw and demultiplexed read-pair totals, and retention percentages. Demultiplexed metrics are calculated only from files created during the current execution, not by scanning all files below the output directory.
+
+For large libraries, read-count plots are automatically split into pages. This avoids oversized PDF files and prevents plotting errors caused by dimensions greater than 50 inches.
 
 ------------------------------------------------------------------------
+
+-   **Validate the library-to-primer relationship.** Necessary step before running the demultiplex.
+
+    ```{r}
+    library_primer_check <- primers_n_samples %>%
+      dplyr::distinct(Lib, Primer) %>%
+      dplyr::count(Lib, name = "n_primers")
+
+    invalid_libraries <- library_primer_check %>%
+      dplyr::filter(n_primers != 1)
+
+    if (nrow(invalid_libraries) > 0) {
+      stop(
+    "Each Lib must contain exactly one Primer. Invalid Lib values: ",
+    paste(invalid_libraries$Lib, collapse = ", "),
+    ". Split the affected libraries in primers_n_samples before demultiplexing."
+      )
+    }
+
+    all_Libs <- primers_n_samples %>%
+      dplyr::pull(Lib) %>%
+      unique()
+
+    print(all_Libs)
+    ```
 
 -   **Run demultiplex function.** Iterates over libraries in the configuration table (`primers_n_samples`) and applies the custom `dmx_metabar2` function to split samples using the index information.
 
     ```{r}
-    # Separate libraries
-    all_Libs <- primers_n_samples$Lib %>% BiocGenerics::unique()
-
-    print(all_Libs)
-
     # Loop over projects and run demultiplexing
     for (LIB in all_Libs) {
       
       # Filter data for current project
-      LIB_data <- primers_n_samples %>% 
-        dplyr::filter(Lib == LIB)
+      LIB_data <- primers_n_samples %>% dplyr::filter(Lib == LIB)
       
       # Extract directories (using unique to get the single value for this project)
       raw_dir <- BiocGenerics::unique(LIB_data$`Multiplexed data path`)
@@ -304,14 +348,18 @@ After running, inspect the PDF plot and the log file generated by `dmx_metabar2`
       # Run demultiplexing
       tictoc::tic(paste0("Demultiplexing raw data"))
       
-      dmx_metabar(multiplex_file_R1 = list.files(raw_dir, pattern = "_R1.*\\.fastq(\\.gz)?$",
-                                             full.names = TRUE),
-                  multiplex_file_R2 = list.files(raw_dir, pattern = "_R2.*\\.fastq(\\.gz)?$",
-                                             full.names = TRUE),
+      dmx_metabar(multiplex_file_R1 = list.files(raw_dir, 
+                                                 pattern = "_R1.*\\.fastq(\\.gz)?$",
+                                                 full.names = TRUE),
+                  multiplex_file_R2 = list.files(raw_dir, 
+                                                 pattern = "_R2.*\\.fastq(\\.gz)?$",
+                                                 full.names = TRUE),
                   out_path = out_dir,
-                  project = paste0(BiocGenerics::unique(LIB_data$Project), collapse = "-"),
+                  project = paste0(BiocGenerics::unique(LIB_data$Project), 
+                                   collapse = "-"),
                   Unique_File_name = LIB_data$Unique_File_name,
                   primers = LIB_data$Primer,
+                  libs = LIB_data$Lib,
                   samples_names = LIB_data$Sample,
                   FWD_sequence = LIB_data$`Sequence FWD`,
                   idxs_FWD_names = LIB_data$`Index name FWD`,
@@ -327,16 +375,16 @@ After running, inspect the PDF plot and the log file generated by `dmx_metabar2`
                   cut_pair_filter = "any",# Discart the pair if ANY read does not have tag
                   cut_max_n = 0, # Discart the pair if one of reads contains N bases
                   cut_action = "retain" # Retain the tags for the downstream Primer Removal
-                )
+      )
       tictoc::toc()
-      }
+    }
     ```
 
 ### Quality checking
 
 The raw sequencing reads are assessed for overall quality before any processing steps. This step runs FastQC and MultiQC on the demultiplexed files, generating per-project interactive reports. The resulting quality profiles — particularly per-position quality scores, GC content, and read length distributions — provide the baseline needed to interpret subsequent primer detection and filtering results.
 
--   **Check that demultiplexed files exist.** Confirms that the paths in `primers_n_samples` actually contain FASTQ files before running FastQC/MultiQC.
+-   **Validate demultiplexed outputs.** Read the sample audit files immediately after demultiplexing. The pipeline stops if a sample has an incomplete output pair or if file organization failed.
 
     ```{r}
     read_files <- primers_n_samples %>%
