@@ -93,7 +93,7 @@ chunk_output_type: console
 
     ```{r}
     # Demultiplex custom function
-    source("/home/gabriel/functions/v6_dmx_metabar2.R")
+    source("/home/gabriel/functions/v8_dmx_metabar2.R")
     ```
 
 ### Load Samples table
@@ -105,7 +105,7 @@ After filling in the table, save it as .csv an place it on the data folder, insi
 -   **Load primers, indexes and samples table.** Reads the configuration CSV containing sample metadata, primers, indexes, and project assignments.
 
     ```{r}
-    primers_n_samples <- readr::read_csv(file = file.path(prjct_path, "data", "roots_metabar-primers_n_samples-2026-07-15.csv"))
+    primers_n_samples <- readr::read_csv(file = file.path(prjct_path, "data", "roots_metabar-primers_n_samples-2026-07-16.csv"))
 
     # Show if the primer_n_samples table was loaded successfully
     primers_n_samples %>% 
@@ -221,7 +221,7 @@ cat \
 
 The same procedure must be repeated independently for every primer library. The paths to these library-specific directories must be recorded in the `Multiplexed data path` column of `primers_n_samples`.
 
-### Demultiplexing
+### Demultiplexing (ATUALIZAR TEXTO EXPLICATIVO)
 
 Demultiplexing assigns each read pair to its corresponding sample based on the unique combination of forward and reverse index sequences flanking the amplicon. This pipeline uses a custom R function, `dmx_metabar2`, which wraps [Cutadapt](https://cutadapt.readthedocs.io) to perform combinatorial paired-end demultiplexing. The function supports two library configurations, which must be selected according to how your sequencing run was prepared:
 
@@ -329,6 +329,8 @@ For large libraries, read-count plots are automatically split into pages. This a
       dplyr::pull(Lib) %>%
       unique()
 
+    # all_Libs <- all_Libs[1]
+
     print(all_Libs)
     ```
 
@@ -361,9 +363,9 @@ For large libraries, read-count plots are automatically split into pages. This a
                   primers = LIB_data$Primer,
                   libs = LIB_data$Lib,
                   samples_names = LIB_data$Sample,
-                  FWD_sequence = LIB_data$`Sequence FWD`,
+                  FWD_sequence = LIB_data$`Full sequence FWD`,
                   idxs_FWD_names = LIB_data$`Index name FWD`,
-                  REV_sequence = LIB_data$`Sequence REV`,
+                  REV_sequence = LIB_data$`Full sequence REV`,
                   idxs_REV_names = LIB_data$`Index name REV`,
                   cut_threads = 60, # Number of threads
                   mixed_orientation = TRUE, # Dual-mixed Library
@@ -415,7 +417,7 @@ The raw sequencing reads are assessed for overall quality before any processing 
       read_files <- valid_read_files
       
     } else {
-      stop("Files were found, but ALL of them are empty (0 reads). Check your demultiplexing step or `Raw data path`.")
+      stop("Files were found, but ALL of them are empty (0 reads). Check your demultiplexing step or `Demultiplexed data path`.")
     }
     ```
 
@@ -423,6 +425,7 @@ The raw sequencing reads are assessed for overall quality before any processing 
 
     ```{r}
     for (PRJ in all_projects) {
+      
       # Create output directories
       fastqc_path <- file.path(qual_path, PRJ, "fastqc")
       multiqc_path <- file.path(qual_path, PRJ, "multiqc")
@@ -430,33 +433,32 @@ The raw sequencing reads are assessed for overall quality before any processing 
       dir.create(fastqc_path, recursive = TRUE, showWarnings = FALSE)
       dir.create(multiqc_path, recursive = TRUE, showWarnings = FALSE)
       
-      # Filter reads belonging to this project
-      raw_path <- 
-        primers_n_samples$`Raw data path`[primers_n_samples$Project == PRJ] %>%
+      # Filter reads per project
+      raw_path <- primers_n_samples$`Demultiplexed data path`[primers_n_samples$Project == PRJ] %>%
         unique()
       
-      project_reads <- read_files[stringr::str_detect(read_files, 
-                                                      paste0(raw_path, 
-                                                             collapse = "|"))]
+      project_reads <- read_files[stringr::str_detect(read_files, paste0(raw_path, collapse = "|"))]
       
-      # 1. Run FastQC (requires GNU parallel + FastQC installed)
-            cmd_fastqc <- paste0("echo '", 
-                                 paste(project_reads, collapse = "\n"), "' | ",
-                                 "parallel fastqc {1} -t 20 -o ", fastqc_path)
-            system(cmd_fastqc)
-            
+      # Avoid ARG_MAX limit by using a temporary file list for GNU parallel
+      tmp_list <- tempfile(fileext = ".txt")
+      writeLines(project_reads, tmp_list)
+      
+      # 1. Run FastQC
+      cmd_fastqc <- paste0("parallel fastqc {} -t 20 -o ", fastqc_path, " < ", tmp_list)
+      system(cmd_fastqc)
+      
+      # Clean up temporary file
+      unlink(tmp_list)
+      
       # 2. Run MultiQC
-            report_name <- paste0(PRJ, 
-                                  "--sequencing_quality-MultiQC_report.html")
-             
-            cmd_multiqc <- paste0("multiqc --no-data-dir --interactive ", fastqc_path, 
-                                  " --filename ",
-                                  file.path(multiqc_path, report_name))
-            system(cmd_multiqc)
-            
-      # 3. Show MultQC report
-            browseURL(file.path(multiqc_path, report_name))
-            }
+      report_name <- paste0(PRJ, "--sequencing_quality-MultiQC_report.html")
+      cmd_multiqc <- paste0("multiqc --no-data-dir --interactive ", fastqc_path,
+                            " --filename ", file.path(multiqc_path, report_name))
+      system(cmd_multiqc)
+      
+      # 3. Open report
+      browseURL(file.path(multiqc_path, report_name))
+    }
     ```
 
 ### Primer detection Analysis
@@ -499,19 +501,31 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     n_R2 <- length(all_fnRs)
 
     if (n_R1 == n_R2 && n_R1 > 0) {
-      message("✓ Paired: ", n_R1, " R1 files match exactly the ", n_R2, 
-              " R2 files.\n", "\nVerify if all expected pairs are listed:\n", 
-              "\nR1 files:\n", paste0("  ", basename(all_fnFs), collapse = "\n"),
-              "\n", "\nR2 files:\n", 
-              paste0("  ", basename(all_fnRs), collapse = "\n"))
+      # Message for successful match
+      msg_body <- paste0("✓ Paired: ", n_R1, " R1 files match exactly the ", n_R2, " R2 files.")
+      
+      if (n_R1 <= 100) {
+        msg_body <- paste0(msg_body, "\n\nVerify if all expected pairs are listed:\n\nR1 files:\n",
+                           paste0("  ", basename(all_fnFs), collapse = "\n"),
+                           "\n\nR2 files:\n",
+                           paste0("  ", basename(all_fnRs), collapse = "\n"))
+        } else {
+          msg_body <- paste0(msg_body, "\n\n(Skipping detailed file list due to large number of files: ",
+                             n_R1, " in total)")
+          }
+      message(msg_body)
+      
       } else {
+        # Message for mismatch
+        msg_body <- paste0("✗ MISMATCH: ", n_R1, " R1 files vs ", n_R2, " R2 files.")
         
-        message("✗ MISMATCH: ", n_R1, " R1 files vs ", n_R2, " R2 files.",
-              "\nR1 files:\n", paste0("  ", basename(all_fnFs), collapse = "\n"),
-              "\n", "\nR2 files:\n", 
-              paste0("  ", basename(all_fnRs), collapse = "\n"),
-              "\nCheck file names in `primers_n_samples` match actual FASTQ files on disk.")
-        }
+        # Even on mismatch, we only list if the number is manageable
+        if (n_R1 <= 100 && n_R2 <= 100) {
+          msg_body <- paste0(msg_body, "\nR1 files:\n", paste0("  ", basename(all_fnFs), collapse = "\n"),
+                             "\n\nR2 files:\n", paste0("  ", basename(all_fnRs), collapse = "\n"))
+          }
+        message(msg_body, "\nCheck if file names in `primers_n_samples` match actual FASTQ files on disk.")
+      }
     ```
 
 -   **Match files to samples.** Associates each sample in primers_n_samples with its corresponding R1/R2 files by matching directory path and Unique_File_name.
@@ -521,7 +535,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     sample_idx_tbl_wide <- primers_n_samples %>%
       dplyr::select("Unique_File_name", "Lib", "Run", "Project",
                     "Researcher", "Sample", "Primer", "Type",
-                    "Raw data path", dplyr::ends_with("ontrol")) %>%
+                    "Demultiplexed data path", dplyr::ends_with("ontrol")) %>%
       dplyr::mutate(FWD_R1 = NA_character_,
                     FWD_R2 = NA_character_)
 
@@ -530,7 +544,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     # For each sample, find the corresponding R1 and R2 files by matching path + Unique_File_name
     for (i in seq_len(nrow(sample_idx_tbl_wide))) {
       
-      pattern_i <- paste0(sample_idx_tbl_wide$`Raw data path`[i], "/",
+      pattern_i <- paste0(sample_idx_tbl_wide$`Demultiplexed data path`[i], "/",
                           sample_idx_tbl_wide$Unique_File_name[i], "_")
       
       # Match forward read (R1) file
@@ -586,13 +600,22 @@ The following workflow performs a critical diagnostic check on the raw sequencin
 -   **Primer database.** Defines primer names and sequences (including IUPAC codes where applicable). Comments are retained only where they document the biological identity of the primers.
 
     ```{r}
-    # Define vector of active primers (uncomment lines to activate specific primer pairs)
-    all_primers <- 
-      c(
-        NeoFish_FWD = "CGCCGTCGCAAGCTTACCCT",
-        NeoFish_REV = "AGTGACGGGCGGTGTGTGC",
-        MiFish_FWD = "GTCGGTAAAACTCGTGCCAGC",
-        MiFish_REV = "ACATAGTGGGGTATCTAATCCCAGTTTG"
+    # Obtain sequence files from primers_n_samples
+    all_primers <- primers_n_samples %>%
+      distinct(Primer, `Primer sequence FWD`, `Primer sequence REV`) %>%
+      pivot_longer(-Primer, names_to = "direction", values_to = "sequence") %>%
+      mutate(name = paste0(Primer, "_", ifelse(direction == "Primer sequence FWD", "FWD", "REV"))) %>%
+      select(name, sequence) %>%
+      deframe()
+      
+    # OPTIONAL: Define vector of active primers (uncomment lines to activate specific primer pairs)
+    {
+      all_primers <-
+      # c(
+        # NeoFish_FWD = "CGCCGTCGCAAGCTTACCCT",
+        # NeoFish_REV = "AGTGACGGGCGGTGTGTGC",
+        # MiFish_FWD = "GTCGGTAAAACTCGTGCCAGC",
+        # MiFish_REV = "ACATAGTGGGGTATCTAATCCCAGTTTG"
         # MiBird__FWD = "GGGTTGGTAAATCTTGTGCCAGC",
         # MiBird__REV = "CATAGTGGGGTATCTAATCCCAGTTTG",
         # MiFish variants (12S, fishes)
@@ -612,16 +635,18 @@ The following workflow performs a critical diagnostic check on the raw sequencin
         # VCOIu__FWD = "CAYGCHTTTGTGNATRATYYTYTT",
         # VCOIu__REV = "GGRGGRTADACDGTYCANCCNGT"
         # (Other primer pairs can be re‑added here following the same pattern)
-        ) %>% 
-      stats::na.omit()
+        # ) %>% 
+      # stats::na.omit()
+      }
 
     # Convert primer vector to list of single-row tibbles (for allOrients function)
     primers_list <- tibble::tibble(`Primer seq`  = all_primers,
                                    `Primer name` = names(all_primers)) %>%
       split(1:nrow(.))
 
+    # Print primers
     primers_list
-
+      
     # Create reference table with IUPAC → Regex conversion for inspection
     all_primers_tbl <- tibble::tibble(Primer = names(all_primers),
                                       `IUPAC sequence` = all_primers) %>%
@@ -633,7 +658,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
 
 #### Generate all primers orientations
 
--   **All primer orientations function.** The function `AllOrients` creates forward, reverse, complement, and reverse-complement variants for each primer using Biostrings, organizing them into a tidy table with orientation labels, parsed IUPAC sequences, and standardized naming for robust downstream read matching.
+-   **All primer orientations function.** The function `allOrients` creates forward, reverse, complement, and reverse-complement variants for each primer using Biostrings, organizing them into a tidy table with orientation labels, parsed IUPAC sequences, and standardized naming for robust downstream read matching.
 
     ```{r}
     # Generates all 4 orientations (FWD/REV/COMP/REVCOMP) for a single primer
