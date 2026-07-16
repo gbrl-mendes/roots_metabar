@@ -225,14 +225,19 @@ chunk_output_type: console
              `Core_Species` = "Metadata 30",
              `Core_Abundance` = "Metadata 31",
              `forward_tag_name` = "Index name FWD",
-             `Forward_sequence` = "Sequence FWD",
+             `forward_tag` = "Index sequence FWD",
+             `forward_primer` = "Primer sequence FWD",
+             `Forward_sequence` = "Full sequence FWD",
              `reverse_tag_name` = "Index name REV",
-             `Reverse_sequence` = "Sequence REV") %>% 
-      select(-c(CN, forward_tag, forward_primer, reverse_tag, reverse_primer, Root_Biomass_g_m2)) %>% 
+             `reverse_tag` = "Index sequence REV",
+             `reverse_primer` = "Primer sequence REV",
+             `Reverse_sequence` = "Full sequence REV") %>% 
+      select(-c(CN, Root_Biomass_g_m2)) %>% 
       relocate(Researcher, Run, Project, Primer, Sample, Unique_File_name, Type,
                num_range("Metadata ", 1:32), obs, `Extraction control`, `PCR control`, 
-               `Filtration control`, Lib, `Index name FWD`, `Sequence FWD`,
-               `Index name REV`, `Sequence REV`, `Multiplexed data path`,
+               `Filtration control`, Lib, `Index name FWD`, `Index sequence FWD`, 
+               `Primer sequence FWD`, `Full sequence FWD`, `Index name REV`, `Index sequence REV`, 
+               `Primer sequence REV`, `Full sequence REV`, `Multiplexed data path`,
                `Demultiplexed data path`)
     
     # Saving
