@@ -182,7 +182,7 @@ chunk_output_type: console
              Type = case_when(str_detect(sample, "^CN") ~ "PCR Control", 
                                 TRUE ~ "sample"),
              `Extraction control` = NA,
-             `PCR control` = case_when(!str_detect(sample, "^CN") ~ CN, 
+             `PCR control` = case_when(!str_detect(sample, "^CN") ~ paste0(CN, "_", pool), 
                                 TRUE ~ NA),
              `Filtration control` = NA,
              Lib = pool,
