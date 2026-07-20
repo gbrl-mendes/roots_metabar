@@ -48,7 +48,7 @@ chunk_output_type: console
       pipe_libs <- file.path(data_path, "reads")
       raw_libs <- file.path(pipe_libs, "raw")
       paired_libs <- file.path(pipe_libs, "paired")
-      cutadapt_libs <- file.path(pipe_libs, "cutadapt")
+      cutadapt_libs <- file.path(pipe_libs, "cutadapt_libs")
       qual_path <- file.path(prjct_path, "quality")
       results_path <- file.path(prjct_path, "results")
       figs_path <- file.path(prjct_path, "figures")
@@ -105,7 +105,7 @@ After filling in the table, save it as .csv an place it on the data folder, insi
 -   **Load primers, indexes and samples table.** Reads the configuration CSV containing sample metadata, primers, indexes, and project assignments.
 
     ```{r}
-    primers_n_samples <- readr::read_csv(file = file.path(prjct_path, "data", "roots_metabar-primers_n_samples-2026-07-16.csv"))
+    primers_n_samples <- readr::read_csv(file = file.path(prjct_path, "data", "roots_metabar-primers_n_samples-2026-07-17.csv"))
 
     # Show if the primer_n_samples table was loaded successfully
     primers_n_samples %>% 
@@ -221,89 +221,72 @@ cat \
 
 The same procedure must be repeated independently for every primer library. The paths to these library-specific directories must be recorded in the `Multiplexed data path` column of `primers_n_samples`.
 
-### Demultiplexing (ATUALIZAR TEXTO EXPLICATIVO)
+### Demultiplexing
 
-Demultiplexing assigns each read pair to its corresponding sample based on the unique combination of forward and reverse index sequences flanking the amplicon. This pipeline uses a custom R function, `dmx_metabar2`, which wraps [Cutadapt](https://cutadapt.readthedocs.io) to perform combinatorial paired-end demultiplexing. The function supports two library configurations, which must be selected according to how your sequencing run was prepared:
+Demultiplexing assigns paired reads to samples according to their forward and reverse index combination. This pipeline uses the custom `dmx_metabar()` function, which calls [Cutadapt](https://cutadapt.readthedocs.io/) to demultiplex paired-end multiplexed FASTQ files.
 
--   **Conventional (single orientation):** All read pairs have the forward index on R1 and the reverse index on R2. Set `mixed_orientation = FALSE`.
--   **Dual mixed-orientation, separated output:** Approximately half the read pairs carry the forward index on R1 and the other half carry it on R2. The function automatically separates them into `/standard/` and `/flipped/` output folders. Set `mixed_orientation = TRUE`.
+Each library must contain a single primer and have matching R1 and R2 files. The function identifies the files associated with each library by searching for the library name followed by `_` or `.` in the FASTQ filename. Therefore, library names in the `Lib` column must match the corresponding raw-file names.
 
-If you are unsure which configuration applies to your data, run the **Primer Detection Analysis** section first (Section 2.x). A mixed-orientation library will show roughly equal counts of both primers in both R1 and R2 files in the `Forward` orientation column of the primer diagnostic plot.
+[**How `dmx_metabar()` works**]{.underline}
 
-[**How `dmx_metabar2` works**]{.underline}
+For each library, the function removes leading `N` bases from the forward and reverse index sequences, optionally retains only the first `query_size` bases, and writes separate forward and reverse index FASTA files.
 
-The function removes leading `N` padding from index sequences, retains the first `query_size` bases, writes separate FWD and REV FASTA files, and passes them to Cutadapt with `-g` and `-G`. Cutadapt then searches all valid FWD/REV index combinations and writes one paired-end output per detected combination.
+Cutadapt receives the forward-index FASTA through `-g` and the reverse-index FASTA through `-G`. It then generates one paired FASTQ output for every detected forward/reverse index combination. The temporary output files are named using the index names and are subsequently renamed using the corresponding values in `Unique_File_name`.
 
-When `mixed_orientation = TRUE`, the function passes `--revcomp` to Cutadapt so that reverse-complement matches are considered during index assignment. Outputs are stored as one R1/R2 pair per sample; the function does not create separate `standard`, `flipped`, or `combined` directories.
-
-The function records every expected sample in an audit table. Samples that receive no complete paired output are retained in the audit report with an explicit status rather than silently disappearing from the results.
+When `mixed_orientation = TRUE`, the function passes `--revcomp` to Cutadapt. This enables reverse-complement matching and should be used only for libraries in which index orientation may be reversed between read pairs. This can occur when sequencing adapters are inserted into amplicons prepared with a PCR-free library kit. In this situation, approximately half the read pairs carry the forward index on R1 and the other half carry it on R2. The function produces one final R1/R2 pair per sample and does not create separate standard- and flipped-orientation directories.
 
 [**Cutadapt parameters**]{.underline}
 
-The parameters below are exposed as arguments in `dmx_metabar2` so they can be tuned per project without modifying the function source. Read each parameter description carefully before running, as the correct values depend on your index design.
+-   **`query_size`** (**`--overlap`** and FASTA truncation) — Defines the number of index bases used for assignment. After removal of leading `N` padding, each index sequence is truncated to `query_size` bases before the FASTA files are written. The same value is passed to Cutadapt through `--overlap`, requiring a match across the full query length. Set this value to the actual index length after removing leading `N` bases. Set it to `NA` to use full index sequences and omit the `--overlap` option.
 
--   **`query_size`** (**`--overlap` +** FASTA truncation) — Controls how many bases are used for index matching. This parameter operates in **two independent steps** inside the function:
+-   **`cut_error_rate`** (**`-e`**) — Maximum error rate allowed during index matching. A value of `0` requires exact matches and is recommended for short, high-quality Illumina indexes.
 
-    1.  **Before calling Cutadapt**, each index sequence in the FASTA file is truncated to exactly `query_size` bases (after N-padding is stripped from the 5′ end). This ensures that only the index bases — and not any downstream primer sequence — are written as reference in the FASTA.
+-   **`cut_indels`** (**`--no-indels`**) — Controls whether insertions and deletions are allowed during matching. When `FALSE`, `--no-indels` is passed to Cutadapt. This is recommended for standard fixed-length indexes.
 
-    2.  `--overlap query_size` is passed to Cutadapt, forcing it to require **all** `query_size` bases to align before accepting a match. This prevents partial matches, which would occur with Cutadapt's default `--overlap 3`.
+-   **`cut_pair_filter`** (**`--pair-filter`**) — Defines how paired reads are retained. With `"any"`, a pair is discarded if either read fails to match its expected index. This is the recommended conservative setting for paired-index demultiplexing.
 
-    Set `query_size` to the exact length of your index tag (after N removal). Using a value larger than the tag will include primer bases in the FASTA reference, reducing specificity between samples that share similar primer sequences. Set to `NA` to skip FASTA truncation and disable the `--overlap` constraint entirely (not recommended for standard demultiplexing).
+-   **`cut_max_n`** (**`--max-n`**) — Maximum number of `N` bases permitted in each sequencing read. Use `NA` to disable this filter. This option applies to the FASTQ reads, not to the index sequences written to the FASTA files.
 
--   **`cut_error_rate`** **(`-e`)** — Maximum proportion of mismatches allowed in the index match. 0 means exact matching only, which is the safest choice for short, high-quality Illumina indexes. If demultiplexing efficiency is unexpectedly low, increasing to 0.1 allows 1 mismatch per 10 bp — but note that for tags shorter than 10 bp, the allowed error count is computed as floor(tag_length × error_rate), which for an 8 bp tag at 0.1 still rounds to 0 allowed errors, since 8 × 0.1 = 0.8 \< 1.
+-   **`cut_match_wildcards`** (**`--match-read-wildcards`**) — When `TRUE`, ambiguous bases in reads can match IUPAC-compatible bases in the index references. The default is `FALSE`, which is generally preferable for stringent index assignment.
 
--   **`cut_indels`** (**`--no-indels`**) — Whether to allow insertions and deletions in the index match. When set to `FALSE` (the default), `--no-indels` is passed to Cutadapt, restricting errors to mismatches only. Should remain FALSE for standard Illumina indexes to prevent shifted-position false matches.
+-   **`cut_discard_untrimmed`** (**`--discard-untrimmed`**) — When `TRUE`, read pairs without a valid index assignment are discarded. This is the default behavior and ensures that only reads assigned to known index combinations are retained.
 
--   **`cut_pair_filter`** (**`--pair-filter`**) — Controls when a read pair is discarded. "`any`" discards a pair if either R1 or R2 fails to match an index — the most conservative option. "`both`" discards a pair only if both reads fail to match, which may allow partially ambiguous assignments through. Use "`any`" unless you have a specific reason to retain partially matched pairs.
+-   **`cut_action`** (**`--action`**) — Defines the treatment of matched index sequences. Use `"retain"` to preserve index sequences for subsequent primer removal, or `"trim"` to remove the matched index sequence during demultiplexing.
 
--   **`cut_max_n`** **(`--max-n`)** — Maximum number of N bases tolerated per biological read before discarding it. Set to `NA` to disable this filter entirely. Note that this filter applies to the sequencing reads (FASTQ) only, not to the index FASTA. The N-padding present in raw index sequences is already stripped by the function before writing the FASTA file
+[**Outputs**]{.underline}
 
--   **`cut_match_wildcards`** **(`--match-read-wildcards`)** — Enables IUPAC wildcard matching in the biological reads. Cutadapt already interprets N's in the index FASTA as wildcards by default (adapter-side wildcard matching). Enabling this parameter additionally allows an N in a biological read to match any defined base in the index reference.
-
-    The function's default is `TRUE`. This is appropriate when your sequencing reads may carry N's at positions overlapping the index region (e.g., in low-complexity or low-quality cycles at the beginning of a read). If your reads are consistently high-quality at the index region, setting this to `FALSE` will be more stringent. **Warning:** enabling wildcard matching in reads with very short index queries can increase false-positive matches — validate your demultiplexing rate in the output log before proceeding.
-
--   **`cut_discard_untrimmed`** **(`--discard-untrimmed`)** — Whether to discard read pairs where no index was found. Set to `TRUE` (the default) to keep only reads assigned to a known sample. A high untrimmed rate (\> 20% of raw reads) suggests a mismatch between the index sequences in the configuration table and those actually used during library preparation — cross-check with your sequencing center's sample sheet before proceeding.
-
--   **`cut_action`** **(`--action`)** — What Cutadapt does with the matched index sequence after assignment. `"retain"` keeps the index in the read after trimming any flanking unmatched sequence, which is appropriate when a downstream Cutadapt step (e.g., primer removal) will handle full excision of both index and primer in a single pass. Use `"trim"` if you want the index removed immediately and no downstream trimming step will be applied. Note that `--action=retain` is incompatible with Cutadapt's `--times` option.
-
-[**Outputs and demultiplexing audit**]{.underline}
-
-For each execution, `dmx_metabar()` creates a structured output directory inside the library-specific `Demultiplexed data path`:
+For each library, `dmx_metabar()` creates the following structure inside `out_path`:
 
 ```{text}
 <Demultiplexed data path>/
-├── demultiplexed_fastq/
-│   ├── <Unique_File_name>__R1.fastq.gz
-│   └── <Unique_File_name>__R2.fastq.gz
-├── audit/
-│   ├── <execution_id>__sample_audit.csv
-│   └── <execution_id>__run_summary.csv
-├── logs/
-│   └── <execution_id>__cutadapt.log
-├── plots/
-│   └── <execution_id>__demultiplexing_reads_page-<n>.pdf
-└── work/
-└── <execution_id>/
-    ├── cutadapt_output/
-    └── indexes/
+├── indexes/
+│   ├── <Primer>--<Lib>--FWD_indexes.fasta
+│   └── <Primer>--<Lib>--REV_indexes.fasta
+├── temp/
+│   └── <Project>/
+│       └── <Lib>/
+├── log/
+│   └── <Project>-<Primer>-<Lib>-<timestamp>.txt
+├── plot/
+│   └── <Project>-<Lib>_<Primer>-dmx_<timestamp>-plot.pdf
+└── cutadapt_output/
+    └── <Project>/
+        └── <Lib>/
+            ├── <Unique_File_name>_R1.fastq.gz
+            └── <Unique_File_name>_R2.fastq.gz
 ```
 
-The `demultiplexed_fastq/` directory contains only final sample-level FASTQ files and is the directory that must be used by all downstream quality-control, primer-removal, and DADA2 steps.
+The final demultiplexed FASTQ files are stored in:
 
-The `audit/` directory contains two CSV files. The sample audit reports sample identifiers, index pairs, expected and observed output paths, output status, read-pair counts, and output sizes. The run summary reports raw and demultiplexed read-pair totals, sizes, retention percentages, sample counts, and paths to the associated log and audit files.
+```{text}
+<Demultiplexed data path>/cutadapt_output/<Project>/<Lib>/
+```
 
-Possible sample-level statuses include:
+These files are gzip-compressed after Cutadapt completes. The function uses `pigz` when available, using the number of threads specified by `gz_threads`; otherwise, it falls back to single-threaded `gzip`.
 
--   `moved`: a complete R1/R2 pair was produced and moved to `demultiplexed_fastq/`;
--   `zero_reads_or_not_written`: Cutadapt did not produce a complete output pair for that index combination;
--   `missing_R1` or `missing_R2`: only one member of the expected read pair was found;
--   `move_failed`: output files were found but could not be moved to their final destination.
+The `log/` directory contains the complete Cutadapt output for each processed library. Inspect this file if Cutadapt fails or if the demultiplexing rate is unexpectedly low.
 
-The pipeline must not proceed if the audit table contains `missing_R1`, `missing_R2`, or `move_failed` records. Samples with `zero_reads_or_not_written` can remain documented as zero-read samples, but they should be excluded from downstream FASTQ-based analyses.
-
-The function reports raw and demultiplexed size in MB, raw and demultiplexed read-pair totals, and retention percentages. Demultiplexed metrics are calculated only from files created during the current execution, not by scanning all files below the output directory.
-
-For large libraries, read-count plots are automatically split into pages. This avoids oversized PDF files and prevents plotting errors caused by dimensions greater than 50 inches.
+The function also reports the total size and number of raw and demultiplexed read pairs, together with their retention percentages. A PDF bar plot is saved in `plot/`, showing the number of demultiplexed read pairs for each sample. Samples with no output FASTQ files are retained in the plot with zero reads.
 
 ------------------------------------------------------------------------
 
@@ -325,6 +308,7 @@ For large libraries, read-count plots are automatically split into pages. This a
       )
     }
 
+    # Define wich libraries will be demultiplexed
     all_Libs <- primers_n_samples %>%
       dplyr::pull(Lib) %>%
       unique()
@@ -401,16 +385,20 @@ The raw sequencing reads are assessed for overall quality before any processing 
 
     # 2. Filter only the files with real data (bigger than 100 bytes)
     valid_read_files <- read_files[file_sizes > 100]
+    
+    # Identify which files are exactly the empty ones
+    empty_files <- setdiff(read_files, valid_read_files)
 
     # 3. Calculate how many were empty
-    empty_count <- length(read_files) - length(valid_read_files)
+    empty_count <- length(empty_files)
 
     # 4. Logical verification and messages
     if (length(valid_read_files) > 0) {
       message(length(valid_read_files), " read files with actual data found for QC.")
       
       if (empty_count > 0) {
-    message("Notice: ", empty_count, " empty files (0 reads) were detected and ignored.")
+        message("Notice: ", empty_count, " empty files (0 reads) were detected and ignored:\n", 
+                paste(basename(empty_files), collapse = "\n"))
       }
       
       # Obtain the read_files variable with only the valid files with reads
@@ -600,7 +588,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
 -   **Primer database.** Defines primer names and sequences (including IUPAC codes where applicable). Comments are retained only where they document the biological identity of the primers.
 
     ```{r}
-    # Obtain sequence files from primers_n_samples
+    # Obtain primers sequences from primers_n_samples
     all_primers <- primers_n_samples %>%
       distinct(Primer, `Primer sequence FWD`, `Primer sequence REV`) %>%
       pivot_longer(-Primer, names_to = "direction", values_to = "sequence") %>%
@@ -710,22 +698,22 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     # Counts how many reads in a FASTQ file contain a given primer
     primerHits <- function(primer, file_name) {
       
-      nhits <- 
-        Biostrings::vcountPattern(primer,
-                                  ShortRead::sread(ShortRead::readFastq(file_name)),
-                                  fixed = FALSE,
-                                  max.mismatch = 1)
+      nhits <- Biostrings::vcountPattern(primer,
+                                         ShortRead::sread(ShortRead::readFastq(file_name)),
+                                         fixed = FALSE,
+                                         max.mismatch = 1)
       sum(nhits > 0)
       }
 
     # primerHits function applied to all primers orientations
-    multi_primerHits <- function(Read_file, primers) {
+    multi_primerHits <- function(Read_file, primers, Unique_File_name) {
       
       primer_counts <- purrr::map_df(primers,
                                      .f = primerHits,
                                      file_name = Read_file)
       
-      primer_counts %>% dplyr::mutate(`Read file` = Read_file)
+      primer_counts %>% dplyr::mutate(`Read file` = Read_file,
+                                      Unique_File_name = Unique_File_name)
       }
     ```
 
@@ -737,6 +725,9 @@ The following workflow performs a critical diagnostic check on the raw sequencin
       dplyr::filter(Stage %in% c("FWD_R1", "FWD_R2")) %>%
       dplyr::select(`Read file`, Unique_File_name, Stage,
                     Project, Run, Primer)
+    
+    # Remove NA values # TEMPORARIO, RESOLVER ISSO LA EM CIMA POS DMX
+    reads_seqs_tbl <- reads_seqs_tbl[!is.na(reads_seqs_tbl$`Read file`), ]
 
     # Create named vector of FASTQ paths (names = sample identifiers)
     reads_seqs <- reads_seqs_tbl$`Read file`
@@ -747,9 +738,10 @@ The following workflow performs a critical diagnostic check on the raw sequencin
       dplyr::pull(Sequence, name = `Orientation name`)
 
     # Set up parallel processing (all cores minus 2)
-    cores_to_use <- future::availableCores() - 2
+    # cores_to_use <- future::availableCores() - 2
+    cores_to_use <- 60
     future::plan(future::multisession(workers = cores_to_use))
-
+  
     # Count primer occurrences across all files x all primer orientations (parallel)
     {
       tictoc::tic("Counting primers")
@@ -757,11 +749,13 @@ The following workflow performs a critical diagnostic check on the raw sequencin
       message("Searching primers across ", length(reads_seqs), " files using ",
               cores_to_use, " cores. This may take a few minutes...")
       
-      primers_in_Nreads <- furrr::future_map_dfr(reads_seqs,
-                                                 .f = multi_primerHits,
-                                                 primers = primers_seqs,
-                                                 .options = 
-                                                   furrr::furrr_options(seed = NULL))
+      primers_in_Nreads <- furrr::future_imap_dfr(reads_seqs,
+                                                  .f = function(val, nm) {
+                                                    multi_primerHits(Read_file = val,
+                                                                     Unique_File_name = nm,
+                                                                     primers = primers_seqs)
+                                                    },
+                                                  .options = furrr::furrr_options(seed = NULL))
       
       tictoc::toc()
       
@@ -772,7 +766,8 @@ The following workflow performs a critical diagnostic check on the raw sequencin
     }
 
     # Join with sample metadata and calculate total reads per file
-    primers_in_Nreads <-  primers_in_Nreads %>%
+    primers_in_Nreads <- primers_in_Nreads %>%
+      select(-c(Unique_File_name)) %>% 
       dplyr::left_join(sample_idx_tbl, 
                        by = "Read file") %>%
       dplyr::mutate(Read = dplyr::if_else(stringr::str_detect(Stage, "R1"), 
@@ -812,7 +807,7 @@ The following workflow performs a critical diagnostic check on the raw sequencin
       dplyr::mutate(Sequences = as.factor(Sequences),
                     Unique_File_name = factor(Unique_File_name, 
                                               levels = sample_levels)) %>% 
-      dplyr::select(-c("Read file", "Stage")) %>% 
+      dplyr::select(-c("Read file")) %>% 
       # Remove columns that are entirely NA
       dplyr::select(where(function(x) any(!is.na(x)))) %>% 
       # Filter out primers with zero counts
