@@ -93,7 +93,7 @@ chunk_output_type: console
 
     ```{r}
     # Demultiplex custom function
-    source("/home/gabriel/functions/v8_dmx_metabar2.R")
+    source("/home/gabriel/functions/v9_dmx_metabar2.R")
     ```
 
 ### Load Samples table
