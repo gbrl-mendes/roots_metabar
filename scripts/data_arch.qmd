@@ -8,7 +8,7 @@ editor_options:
 chunk_output_type: console
 ---
 
-# Mock Communities ASV versus MOTUs project - ASV analyses
+# Tanguro Roots Metabarcoding
 
 ## 1. Setup & Configuration
 
@@ -172,11 +172,12 @@ chunk_output_type: console
       left_join(species_per_core_tbl_rdx, by = "Core_ID") %>% 
       relocate(Core_ID, Lab_ID, sample, replica) %>% 
       mutate(Researcher = "Carol Flynn",
-             Run = "mtg_jun26",
              Project = "roots_metabar",
              Primer = str_extract(forward_tag_name, "^[^-]*"),
              Sample = case_when(!str_detect(Lab_ID, "^CN") ~ paste0(Primer, "_", Lab_ID),
                                 TRUE ~ sample),
+             Run = case_when(Primer == "ITS2" ~ "mtg_jun26-1",
+                             TRUE ~ "mtg_jun26-2"),
              Unique_File_name = case_when(!str_detect(sample, "^CN") ~ paste0(Primer, "_", sample),
                                           TRUE ~ sample),
              Type = case_when(str_detect(sample, "^CN") ~ "PCR Control", 
