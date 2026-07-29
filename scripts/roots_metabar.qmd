@@ -457,7 +457,7 @@ The raw sequencing reads are assessed for overall quality before any processing 
 
 ### Primer detection Analysis
 
-The following workflow performs a critical diagnostic check on the raw sequencing reads before any actual sequence trimming or filtering takes place. In this section, the script intentionally searches for all defined primer sequences across all samples, evaluating four different sequence orientations (`Forward`, `Complement`, `Reverse`, and `RevComp`[Reverse-Complement]). This comprehensive "all-versus-all" screening serves three primary quality control purposes:
+The following workflow performs a critical diagnostic check on the raw sequencing reads before any actual sequence trimming or filtering takes place. In this section, the script intentionally searches for all defined primer sequences across all samples, evaluating four different sequence orientations (`Forward`, `Complement`, `Reverse`, and `RevComp`\[Reverse-Complement\]). This comprehensive "all-versus-all" screening serves three primary quality control purposes:
 
 1.  It validates that the expected primers are successfully detected within their corresponding samples;
 
@@ -1348,7 +1348,7 @@ The [Cutadapt](https://cutadapt.readthedocs.io/) software is used to remove prim
 
 #### Primer Removal Verification
 
-This section  evaluates primer removal after Cutadapt trimming. Residual matches are searched across the primer orientations defined in `primers_all_orients` with `multi_primerHits()` function for each trimmed R1 and R2 file. The resulting table contains only non-zero matches and should be reviewed when present.
+This section evaluates primer removal after Cutadapt trimming. Residual matches are searched across the primer orientations defined in `primers_all_orients` with `multi_primerHits()` function for each trimmed R1 and R2 file. The resulting table contains only non-zero matches and should be reviewed when present.
 
 A non-empty table does not necessarily indicate failed primer removal: internal or partial matches can occur by chance, particularly for short or degenerate primers. However, systematic matches at expected primer positions, or high residual counts relative to the number of reads, should be investigated before downstream filtering and ASV inference.
 
@@ -1440,7 +1440,7 @@ A non-empty table does not necessarily indicate failed primer removal: internal 
     Unique_File_name_Read_levels <- primers_in_cutadapt_reads_long %>%
       dplyr::pull(Unique_File_name_Read) %>%
       base::unique()
-    
+
     # Report whether residual primer hits were detected.
     if (nrow(primers_in_cutadapt_reads_long) == 0) {
       message("No residual primer hits were detected after the initial Cutadapt trimming step.")
@@ -1456,7 +1456,7 @@ A non-empty table does not necessarily indicate failed primer removal: internal 
 
 Although the initial adapter trimming step removes target primers from read extremities, residual primer sequences can occasionally persist due to non-canonical read-through, internal chimera-like artifacts, or subtle sequence variations. Implementing a secondary, strict filtering step with Cutadapt specifically targets and discards any remaining reads containing residual primers across all orientations. Crucially, this second pass should only be performed if the post-trimming verification step detects residual primer hits above acceptable thresholds; applying it unnecessarily to fully cleaned datasets would incur superfluous computational overhead without providing further data quality benefits.
 
--   **Execute Cutadapt.** Iterate over each valid input file pair and invoke the Cutadapt **`system2`** command. 
+-   **Execute Cutadapt.** Iterate over each valid input file pair and invoke the Cutadapt **`system2`** command.
 
     ```{r}
     # Obtain which samples still have primers after Cutadapt previous removal
@@ -1543,7 +1543,7 @@ Although the initial adapter trimming step removes target primers from read extr
         message("No valid input files found for strict filtering in primer set: ", PRIMER_SET)
       }
     }
-    
+
     message("✓ Rigorous filtering complete.")
     ```
 
@@ -1640,7 +1640,7 @@ A well-trimmed library should show zero counts in all orientations for all prime
       dplyr::select(where(function(x) any(!is.na(x)))) %>%
       # Keep only rows with residual primer signal
       dplyr::filter(Count != 0)
-    
+
     # Confirm whether strict filtering removed all detectable primer sequences.
     if (nrow(strict_primers_in_cutadapt_reads_long) == 0) {
       message("No residual primer hits were detected after strict Cutadapt filtering.")
@@ -1955,8 +1955,7 @@ With primers removed and low-quality bases filtered out, the reads are ready for
     all_derep_reverse <- list()
 
     # Loop through each sequencing run for inference
-    for (seq_run in unique(filter_files_per_primer$Run)) {
-      
+    for (seq_run in unique(filter_files_per_primer$Run)){
       message(paste0("Processing inference for Run: ", seq_run))
       
       # Get filtered file lists for this run
@@ -1986,7 +1985,7 @@ With primers removed and low-quality bases filtered out, the reads are ready for
       all_dadaRs <- append(all_dadaRs, seq_dadaRs)
       all_derep_forward <- append(all_derep_forward, seq_derep_forward)
       all_derep_reverse <- append(all_derep_reverse, seq_derep_reverse)
-      }
+    }
 
     message("ASV Inference Complete across all runs.")
     ```
@@ -1998,143 +1997,181 @@ Following ASV inference, the independently processed forward and reverse reads m
 -   **Merge paired reads.** Combine the inferred forward and reverse ASVs to reconstruct the full target amplicon. Only reads that perfectly overlap (without mismatches) by at least the specified minimum length are successfully merged.
 
     ```{r}
-    {
-      message("Merging paired-end reads...")
-      all_mergers <- dada2::mergePairs(dadaF = all_dadaFs,
-                                       derepF = all_derep_forward,
-                                       dadaR = all_dadaRs,
-                                       derepR = all_derep_reverse,
-                                       minOverlap = 10,
-                                       maxMismatch = 0,
-                                       verbose = TRUE)
-      
-      # Construct Sequence Table (ASV table)
-      mergers_seqtab <- dada2::makeSequenceTable(all_mergers)
-      
-      # Check raw ASV length distribution
-      message("Amplicon length distribution before chimera removal:")
-      table(nchar(dada2::getSequences(mergers_seqtab)))
-    }
+    all_mergers <- dada2::mergePairs(dadaF = all_dadaFs,
+                                     derepF = all_derep_forward,
+                                     dadaR = all_dadaRs,
+                                     derepR = all_derep_reverse,
+                                     minOverlap = 10,
+                                     maxMismatch = 0,
+                                     verbose = TRUE)
+
+    # Construct Sequence Table (ASV table)
+    mergers_seqtab <- dada2::makeSequenceTable(all_mergers)
+
+    # Check raw ASV length distribution
+    message("Amplicon length distribution before chimera removal:")
+    table(nchar(dada2::getSequences(mergers_seqtab)))
     ```
 
--   **Concat unpaired reads.** Combine the inferred forward and reverse reads that lack sufficient overlap by artificially joining them. Instead of a true merge, this step inserts a spacer of 'N's between the read pairs, allowing the sequence information from both ends to be retained and analyzed as a single unit.
+-   **Concat unpaired reads (OPTIONAL).** Combine the inferred forward and reverse reads that lack sufficient overlap by artificially joining them. Instead of a true merge, this step inserts a spacer of 'N's between the read pairs, allowing the sequence information from both ends to be retained and analyzed as a single unit.
 
     ```{r}
-    {
-      message("Concatenating unpaired reads...")
-      all_concat <- dada2::mergePairs(dadaF = all_dadaFs,
-                                      derepF = all_derep_forward,
-                                      dadaR = all_dadaRs,
-                                      derepR = all_derep_reverse,
-                                      justConcatenate = TRUE,
-                                      verbose = TRUE)
-      
-      # Construct Sequence Table (ASV table)
-      concat_seqtab <- dada2::makeSequenceTable(all_concat)
-      
-      # Check raw ASV length distribution
-      message("Amplicon length distribution before chimera removal:")
-      table(nchar(dada2::getSequences(concat_seqtab)))
-    }
+    message("Concatenating unpaired reads...")
+    all_concat <- dada2::mergePairs(dadaF = all_dadaFs,
+                                    derepF = all_derep_forward,
+                                    dadaR = all_dadaRs,
+                                    derepR = all_derep_reverse,
+                                    justConcatenate = TRUE,
+                                    verbose = TRUE)
+
+    # Construct Sequence Table (ASV table)
+    concat_seqtab <- dada2::makeSequenceTable(all_concat)
+
+    # Check raw ASV length distribution
+    message("Amplicon length distribution before chimera removal:")
+    table(nchar(dada2::getSequences(concat_seqtab)))
     ```
 
 -   **Construct Sequence Table (Separeted unmerged reads).** When paired-end reads do not sufficiently overlap to reconstruct the full amplicon, the analysis must proceed with R1 and R2 reads independently, generating separate ASV tables for each read direction.
 
     ```{r}
+    # Filter only the unmerged primer 
+    idx_rbcl <- grepl("rbcL", names(all_dadaFs))
+
     # Construct Sequence Tables for unmerged reads.
-    R1_seqtab <- dada2::makeSequenceTable(all_dadaFs)
-    R2_seqtab <- dada2::makeSequenceTable(all_dadaRs)
+    R1_seqtab <- dada2::makeSequenceTable(all_dadaFs[idx_rbcl])
+    R2_seqtab <- dada2::makeSequenceTable(all_dadaRs[idx_rbcl])
     ```
 
 -   **Remove chimeras.** Identify and remove artifactual sequences formed during PCR amplification when two different biological sequences combine. The `method="consensus"` compares sequences across samples to confidently detect these artifacts.
 
     ```{r}
-    {
-      message("Identifying and removing chimeric sequences...")
-      
-      mergers_seqtab.nochim <- dada2::removeBimeraDenovo(mergers_seqtab,
-                                                         method = "consensus",
-                                                         multithread = TRUE,
-                                                         verbose = TRUE)
-      
-      # Calculate chimera removal stats
-      chimera_prop <- base::sum(mergers_seqtab.nochim) / base::sum(mergers_seqtab)
-      message(paste0("Retained ", base::round(chimera_prop * 100, 2), 
-                     "% of reads after chimera removal."))
-      
-      # Inspect final length distribution
-      message("Final Amplicon length distribution (No Chimeras):")
-      table(nchar(dada2::getSequences(mergers_seqtab.nochim)))
-      
-      # Save the final pristine sequence table as an R object to prevent data loss
-      saveRDS(mergers_seqtab.nochim, file = file.path(nochim_path, "seqtab.nochim.rds"))
-      message("Saved merged final sequence table to: ", file.path(nochim_path,
-                                                                  "seqtab.nochim.rds"))
-    }
+    mergers_seqtab.nochim <- dada2::removeBimeraDenovo(mergers_seqtab,
+                                                       method = "consensus",
+                                                       multithread = TRUE,
+                                                       verbose = TRUE)
+
+    # Calculate chimera removal stats
+    chimera_prop <- base::sum(mergers_seqtab.nochim) / base::sum(mergers_seqtab)
+    message(paste0("Retained ", base::round(chimera_prop * 100, 2),
+                   "% of reads after chimera removal."))
+
+    # Inspect final length distribution
+    message("Final Amplicon length distribution (No Chimeras):")
+    table(nchar(dada2::getSequences(mergers_seqtab.nochim)))
+
+    # Save the final pristine sequence table as an R object to prevent data loss
+    saveRDS(mergers_seqtab.nochim, file = file.path(nochim_path,
+                                                    "seqtab.nochim.rds"))
+    message("Saved merged final sequence table to: ",
+            file.path(nochim_path, "seqtab.nochim.rds"))
     ```
 
 -   **Remove chimeras (Concatenated reads).** As with the merged amplicons, the artificially joined sequences may contain chimeric artifacts generated during the PCR amplification steps.
 
     ```{r}
-    {
-      message("Identifying and removing chimeric sequences from Concatenated reads...")
-      
-      concat_seqtab.nochim <- dada2::removeBimeraDenovo(concat_seqtab,
-                                                        method = "consensus",
-                                                        multithread = TRUE,
-                                                        verbose = TRUE)
-      
-      # Calculate chimera removal stats
-      chimera_prop_concat <- base::sum(concat_seqtab.nochim) / base::sum(concat_seqtab)
-      message(paste0("Retained ", base::round(chimera_prop_concat * 100, 2), 
-                     "% of reads after chimera removal."))
-      
-      # Inspect final length distribution
-      message("Final Amplicon length distribution (No Chimeras):")
-      table(nchar(dada2::getSequences(concat_seqtab.nochim)))
-      
-      # Save the final pristine sequence table as an R object to prevent data loss
-      saveRDS(concat_seqtab.nochim, file = file.path(nochim_path, "concat_seqtab.nochim.rds"))
-      message("Saved merged final sequence table to: ", file.path(nochim_path,
-                                                                  "concat_seqtab.nochim.rds"))
-    }
+    concat_seqtab.nochim <- dada2::removeBimeraDenovo(concat_seqtab,
+                                                      method = "consensus",
+                                                      multithread = TRUE,
+                                                      verbose = TRUE)
+
+    # Calculate chimera removal stats
+    chimera_prop_concat <- base::sum(concat_seqtab.nochim) / base::sum(concat_seqtab)
+    message(paste0("Retained ", base::round(chimera_prop_concat * 100, 2), 
+                   "% of reads after chimera removal."))
+
+    # Inspect final length distribution
+    message("Final Amplicon length distribution (No Chimeras):")
+    table(nchar(dada2::getSequences(concat_seqtab.nochim)))
+
+    # Save the final pristine sequence table as an R object to prevent data loss
+    saveRDS(concat_seqtab.nochim, file = file.path(nochim_path, "concat_seqtab.nochim.rds"))
+    message("Saved merged final sequence table to: ", file.path(nochim_path,
+                                                                "concat_seqtab.nochim.rds"))
     ```
 
 -   **Remove chimeras (Unmerged reads).** Just as with the merged sequences, the independent R1 and R2 sequence tables may contain chimeric amplicons generated during the PCR amplification steps.
 
     ```{r}
-    {
-      message("Identifying and removing chimeric sequences from unmerged R1 and R2 reads...")
-      
-      # Remove chimeras from R1
-      R1_seqtab.nochim <- dada2::removeBimeraDenovo(R1_seqtab, 
-                                                  method = "consensus", 
-                                                  multithread = TRUE, 
+    # Remove chimeras from R1
+    R1_seqtab.nochim <- dada2::removeBimeraDenovo(R1_seqtab,
+                                                  method = "consensus",
+                                                  multithread = TRUE,
                                                   verbose = TRUE)
-      
-      # Calculate chimera removal stats for R1 reads
-      chimera_prop_R1 <- base::sum(R1_seqtab.nochim) / base::sum(R1_seqtab)
-      message(paste0("Retained ", base::round(chimera_prop_R1 * 100, 2), 
-                     "% of R1 reads after chimera removal."))
-      
-      # Save the final pristine sequence table as an R object to prevent data loss
-      saveRDS(R1_seqtab.nochim, file = file.path(nochim_path, "R1_seqtab.nochim.rds"))
-      message("Saved R1 final sequence table to: ", file.path(nochim_path,
-                                                              "R1_seqtab.nochim.rds"))
 
-      # Remove chimeras from R2
-      R2_seqtab.nochim <- dada2::removeBimeraDenovo(R2_seqtab, method = "consensus", 
-                                                  multithread = TRUE, verbose = TRUE)
-      
-      # Calculate chimera removal stats for R2 reads
-      chimera_prop_R2 <- base::sum(R2_seqtab.nochim) / base::sum(R2_seqtab)
-      message(paste0("Retained ", base::round(chimera_prop_R2 * 100, 2), 
-                     "% of R2 reads after chimera removal."))
-      
-      # Save the final pristine sequence table as an R object to prevent data loss
-      saveRDS(R2_seqtab.nochim, file = file.path(nochim_path, "R2_seqtab.nochim.rds"))
-      message("Saved R2 final sequence table to: ", file.path(nochim_path,
-                                                              "R2_seqtab.nochim.rds"))
+    # Calculate chimera removal stats for R1 reads
+    chimera_prop_R1 <- base::sum(R1_seqtab.nochim) / base::sum(R1_seqtab)
+    message(paste0("Retained ", base::round(chimera_prop_R1 * 100, 2), 
+                   "% of R1 reads after chimera removal."))
+
+    # Save the final pristine sequence table as an R object to prevent data loss
+    saveRDS(R1_seqtab.nochim, file = file.path(nochim_path, "R1_seqtab.nochim.rds"))
+    message("Saved R1 final sequence table to: ", file.path(nochim_path,
+                                                            "R1_seqtab.nochim.rds"))
+    # Remove chimeras from R2
+    R2_seqtab.nochim <- dada2::removeBimeraDenovo(R2_seqtab, method = "consensus", 
+                                                multithread = TRUE, verbose = TRUE)
+
+    # Calculate chimera removal stats for R2 reads
+    chimera_prop_R2 <- base::sum(R2_seqtab.nochim) / base::sum(R2_seqtab)
+    message(paste0("Retained ", base::round(chimera_prop_R2 * 100, 2), 
+                   "% of R2 reads after chimera removal."))
+
+    # Save the final pristine sequence table as an R object to prevent data loss
+    saveRDS(R2_seqtab.nochim, file = file.path(nochim_path, "R2_seqtab.nochim.rds"))
+    message("Saved R2 final sequence table to: ", file.path(nochim_path,
+                                                            "R2_seqtab.nochim.rds"))
+    ```
+
+-   **Merging Unmerged reads sequence tables.** This step combines the independent R1 and R2 ASV tables into one sample-by-sequence table. Because forward and reverse reads are treated as separate sequence regions, identical sample names are retained and their ASV counts are summed.
+
+    ```{r}
+    # Merge R1 and R2 unmerged sequence tables
+    unmerged_seqtab.nochim <- dada2::mergeSequenceTables(R1_seqtab.nochim,
+                                                         R2_seqtab.nochim,
+                                                         repeats = "sum")
+
+    # Verifying if the merge was sucesseful
+
+    # Row count (samples) 
+    nrow_unmerged <- nrow(unmerged_seqtab.nochim)
+    nrow_R1_R2 <- length(union(rownames(R1_seqtab.nochim), rownames(R2_seqtab.nochim)))
+
+    samples_match <- identical(nrow_unmerged, 
+                               nrow_R1_R2)
+
+    # Column count (sequences)
+    ncol_unmerged <- ncol(unmerged_seqtab.nochim)
+    nrow_R1_R2 <- length(union(colnames(R1_seqtab.nochim), colnames(R2_seqtab.nochim)))
+
+    sequences_match <- identical(ncol_unmerged,
+                                 nrow_R1_R2)
+
+    # Per-sample spot check
+    rowsums_unmerged <- rowSums(unmerged_seqtab.nochim)
+    rowsums_R1_R2 <- rowSums(R1_seqtab.nochim) + rowSums(R2_seqtab.nochim)
+
+    counts_match <- identical(rowsums_unmerged,
+                              rowsums_R1_R2)
+
+    # Report merge status
+    if (samples_match && sequences_match && counts_match) {
+      message("Sequence-table merge completed successfully: sample names, ASV sequences, and per-sample read counts are consistent.")
+    } else {
+      warning("Sequence-table merge check failed: inspect sample names, ASV sequences,
+              and/or per-sample read counts.")
+
+      if (!samples_match) {
+        message("Sample names in the merged table do not match the expected union of R1 and R2 samples.")
+      }
+
+      if (!sequences_match) {
+        message("ASV sequences in the merged table do not match the expected union of R1 and R2 sequences.")
+      }
+
+      if (!counts_match) {
+        message("Per-sample read counts in the merged table do not equal the sum of R1 and R2 counts.")
+      }
     }
     ```
 
@@ -2145,124 +2182,120 @@ A fundamental quality control practice in metabarcoding is monitoring the propor
 -   **Compile statistics.** Gather read counts from every processing step (Raw/Cutadapt → Filtered → Denoised → Merged → Non-chimeric) to assess pipeline quality and detect samples where massive data loss ocurred.
 
     ```{r}
-    {
-      message("Compiling read retention statistics across all pipeline stages...")
-      
-      # 1. Helper function to extract counts from DADA objects
-      getN <- function(x) { base::sum(dada2::getUniques(x)) }
-      
-      # 2. Extract RAW read counts
-      # We only count R1 because paired-end files have identical line counts
-      raw_reads_paths <- sample_idx_tbl %>%
-        dplyr::filter(Stage == "FWD_R1") %>%
-        dplyr::pull(`Read file`, name = Unique_File_name)
-      
-      # 3. Extract Cutadapt read counts and build composite key
-      # cut_files_per_primer contains Unique_File_name, we use unite() to match the DADA2 outputs
-      tbl_Cutadapt <- cut_files_per_primer %>%
-        dplyr::filter(Stage == "FWD_R1_cutadapt") %>%
-        dplyr::mutate(`Primer detected reads (pairs)` = 
-                        sapply(`Read file`, function(x) ShortRead::countFastq(x)[,1])) %>%
-        tidyr::unite(col = "Unique_File_name_Primer",
-                     Unique_File_name, Primer,
-                     sep = "--",
-                     remove = FALSE) %>%
-        dplyr::select(Unique_File_name_Primer, 
-                      Unique_File_name, Primer, 
-                      `Primer detected reads (pairs)`)
-      
-      # 4. Extract DADA2 sequence steps
-      tbl_Denoised_R1 <- tibble::enframe(sapply(all_dadaFs, getN),
-                                         name = "Unique_File_name_Primer", 
-                                         value = "Denoised (R1)")
-      
-      tbl_Denoised_R2 <- tibble::enframe(sapply(all_dadaRs, getN),
-                                         name = "Unique_File_name_Primer", 
-                                         value = "Denoised (R2)")
-      
-      tbl_Merged <- tibble::enframe(rowSums(mergers_seqtab),
-                                         name = "Unique_File_name_Primer", 
-                                         value = "Merged")
-      
-      tbl_Concat <- tibble::enframe(rowSums(concat_seqtab),
-                                    name = "Unique_File_name_Primer",
-                                    value = "Concat")
-      
-      tbl_NonChim <- tibble::enframe(rowSums(mergers_seqtab.nochim),
-                                         name = "Unique_File_name_Primer", 
-                                         value = "Non-chimeric Merged")
-      
-      tbl_NonChim_Concat <- tibble::enframe(rowSums(concat_seqtab.nochim),
-                                            name = "Unique_File_name_Primer",
-                                            value = "Non-chimeric Concat")
-      
-      tbl_NonChim_R1 <- tibble::enframe(rowSums(R1_seqtab.nochim), 
-                                      name = "Unique_File_name_Primer", 
-                                      value = "Non-chimeric R1")
-      
-      tbl_NonChim_R2 <- tibble::enframe(rowSums(R2_seqtab.nochim), 
-                                      name = "Unique_File_name_Primer", 
-                                      value = "Non-chimeric R2")
-      
-      # 4. Combine all tracking metrics into a single cohesive table
-      all_track <- list(tbl_Cutadapt,
-                        tbl_Denoised_R1,
-                        tbl_Denoised_R2,
-                        tbl_Merged,
-                        tbl_Concat,
-                        tbl_NonChim,
-                        tbl_NonChim_Concat,
-                        tbl_NonChim_R1, 
-                        tbl_NonChim_R2) %>%
-        purrr::reduce(dplyr::left_join, 
-                      by = "Unique_File_name_Primer") %>%
-        dplyr::left_join(pre_filtered_summary %>%  dplyr::select(-c(Proportion)), 
-                         by = "Unique_File_name") %>%
-        dplyr::left_join(filtered_summary %>% dplyr::select(-c(Proportion, `Raw reads (pairs)`)), 
-                         by = "Unique_File_name") %>%
-        # Join with original configuration metadata
-        dplyr::left_join(primers_n_samples,
-                         by = c("Unique_File_name", "Primer")) %>%
-        # Reorder columns logically to match the sequence of events
-        dplyr::relocate(Project, Sample, `Raw reads (pairs)`, `Pre-Filtered reads (pairs)`,
-                        `Primer detected reads (pairs)`, `Filtered reads (pairs)`,
-                        `Denoised (R1)`, `Denoised (R2)`, Merged, Concat, `Non-chimeric Merged`, 
-                        `Non-chimeric Concat`, `Non-chimeric R1`, `Non-chimeric R2`)
-      
-      # Show preview
-      all_track %>%
-      dplyr::select(Unique_File_name, 
-                    `Raw reads (pairs)`, 
-                    `Pre-Filtered reads (pairs)`, 
-                    `Primer detected reads (pairs)`,
-                    `Filtered reads (pairs)`,
-                    `Denoised (R1)`,
-                    `Denoised (R2)`,
-                    `Non-chimeric Merged`,
-                    `Non-chimeric Concat`,
-                    `Non-chimeric R1`,
-                    `Non-chimeric R2`) %>%
-      View()
-    }
+    # 1. Helper function to extract counts from DADA objects
+    getN <- function(x) { base::sum(dada2::getUniques(x)) }
+
+    # 2. Extract RAW read counts
+    # We only count R1 because paired-end files have identical line counts
+    raw_reads_paths <- sample_idx_tbl %>%
+      dplyr::filter(Stage == "FWD_R1") %>%
+      dplyr::pull(`Read file`, name = Unique_File_name)
+
+    # 3. Extract Cutadapt read counts and build composite key
+    # cut_files_per_primer contains Unique_File_name, we use unite() to match the DADA2 outputs
+    tbl_Cutadapt <- cut_files_per_primer %>%
+      dplyr::filter(Stage == "FWD_R1_cutadapt") %>%
+      dplyr::mutate(`Primer detected reads (pairs)` = 
+                      sapply(`Read file`, function(x) ShortRead::countFastq(x)[,1])) %>%
+      tidyr::unite(col = "Unique_File_name_Primer",
+                   Unique_File_name, Primer,
+                   sep = "--",
+                   remove = FALSE) %>%
+      dplyr::select(Unique_File_name_Primer, 
+                    Unique_File_name, Primer, 
+                    `Primer detected reads (pairs)`)
+
+    # 4. Extract DADA2 sequence steps
+    tbl_Denoised_R1 <- tibble::enframe(sapply(all_dadaFs, getN),
+                                       name = "Unique_File_name_Primer", 
+                                       value = "Denoised (R1)")
+
+    tbl_Denoised_R2 <- tibble::enframe(sapply(all_dadaRs, getN),
+                                       name = "Unique_File_name_Primer", 
+                                       value = "Denoised (R2)")
+
+    tbl_Merged <- tibble::enframe(rowSums(mergers_seqtab),
+                                       name = "Unique_File_name_Primer", 
+                                       value = "Merged")
+
+    # tbl_Concat <- tibble::enframe(rowSums(concat_seqtab),
+    #                               name = "Unique_File_name_Primer",
+    #                               value = "Concat")
+
+    tbl_NonChim <- tibble::enframe(rowSums(mergers_seqtab.nochim),
+                                       name = "Unique_File_name_Primer", 
+                                       value = "Non-chimeric Merged")
+
+    # tbl_NonChim_Concat <- tibble::enframe(rowSums(concat_seqtab.nochim),
+    #                                       name = "Unique_File_name_Primer",
+    #                                       value = "Non-chimeric Concat")
+
+    tbl_NonChim_R1 <- tibble::enframe(rowSums(R1_seqtab.nochim), 
+                                    name = "Unique_File_name_Primer", 
+                                    value = "Non-chimeric R1")
+
+    tbl_NonChim_R2 <- tibble::enframe(rowSums(R2_seqtab.nochim), 
+                                    name = "Unique_File_name_Primer", 
+                                    value = "Non-chimeric R2")
+
+    # 4. Combine all tracking metrics into a single cohesive table
+    all_track <- list(tbl_Cutadapt,
+                      tbl_Denoised_R1,
+                      tbl_Denoised_R2,
+                      tbl_Merged,
+                      # tbl_Concat,
+                      tbl_NonChim,
+                      # tbl_NonChim_Concat,
+                      tbl_NonChim_R1, 
+                      tbl_NonChim_R2) %>%
+      purrr::reduce(dplyr::left_join, 
+                    by = "Unique_File_name_Primer") %>%
+      dplyr::left_join(pre_filtered_summary %>%  dplyr::select(-c(Proportion)), 
+                       by = "Unique_File_name") %>%
+      dplyr::left_join(filtered_summary %>% dplyr::select(-c(Proportion, `Raw reads (pairs)`)), 
+                       by = "Unique_File_name") %>%
+      # Join with original configuration metadata
+      dplyr::left_join(primers_n_samples,
+                       by = c("Unique_File_name", "Primer")) %>%
+      # Reorder columns logically to match the sequence of events
+      dplyr::relocate(Project, Sample, `Raw reads (pairs)`, `Pre-Filtered reads (pairs)`,
+                      `Primer detected reads (pairs)`, `Filtered reads (pairs)`,
+                      `Denoised (R1)`, `Denoised (R2)`, Merged, 
+                      # Concat, 
+                      `Non-chimeric Merged`, 
+                      # `Non-chimeric Concat`, 
+                      `Non-chimeric R1`, `Non-chimeric R2`)
+
+    # Show preview
+    all_track %>%
+    dplyr::select(Unique_File_name, 
+                  `Raw reads (pairs)`, 
+                  `Pre-Filtered reads (pairs)`, 
+                  `Primer detected reads (pairs)`,
+                  `Filtered reads (pairs)`,
+                  `Denoised (R1)`,
+                  `Denoised (R2)`,
+                  `Non-chimeric Merged`,
+                  # `Non-chimeric Concat`,
+                  `Non-chimeric R1`,
+                  `Non-chimeric R2`) %>%
+    View()
     ```
 
 -   **Save metrics to sheet.** Export the aggregated tracking table to individual spreadsheets for project-specific reporting and external auditing.
 
     ```{r}
-    {
-      for (PRJ in all_projects) {
-        
-        prj_track <- all_track %>%
-          dplyr::filter(Project == PRJ)
-        
-        output_file <- file.path(tables_path, paste0(PRJ, "-reads_and_seqs_counts-",
-                                                     Sys.Date(), ".csv"))
-        
-        readr::write_csv(prj_track, file = output_file)
-        }
-
-      message("✓ Saved read tracking metrics to datasheet file.")
-    }
+    for (PRJ in all_projects) {
+      
+      prj_track <- all_track %>%
+        dplyr::filter(Project == PRJ)
+      
+      output_file <- file.path(tables_path, paste0(PRJ, "-reads_and_seqs_counts-",
+                                                   Sys.Date(), ".csv"))
+      
+      readr::write_csv(prj_track, file = output_file)
+      }
+    message("✓ Saved read tracking metrics to datasheet file.")
     ```
 
 -   **Plot Read Retention.** Transforms the tabular data into a long format to generate faceted bar plots. These visual summaries quickly highlight whether data loss occurred uniformly across stages or if specific samples failed abruptly at a particular step. Plots are saved automatically as PDFs.
@@ -2280,7 +2313,7 @@ A fundamental quality control practice in metabarcoding is monitoring the propor
                     "Denoised (R2)",
                     "Merged",
                     "Non-chimeric Merged",
-                    "Non-chimeric Concat",
+                    # "Non-chimeric Concat",
                     "Non-chimeric R1",
                     "Non-chimeric R2") %>%
       dplyr::mutate(Stage = factor(Stage, levels = c("Raw reads (pairs)",
@@ -2291,7 +2324,7 @@ A fundamental quality control practice in metabarcoding is monitoring the propor
                                                      "Denoised (R2)",
                                                      "Merged",
                                                      "Non-chimeric Merged",
-                                                     "Non-chimeric Concat",
+                                                     # "Non-chimeric Concat",
                                                      "Non-chimeric R1",
                                                      "Non-chimeric R2"))) 
       
@@ -2354,7 +2387,7 @@ A fundamental quality control practice in metabarcoding is monitoring the propor
 -   **Save the R environment.** Stores all objects and variables created in this section so you can reload them later if the pipeline fails or you need to resume from this point.
 
     ```{r}
-    base::save.image(paste0(env_path, "/", "3_DADA2_worflow-", Sys.Date(), ".RData"))
+    # base::save.image(paste0(env_path, "/", "3_DADA2_worflow-", Sys.Date(), ".RData"))
     ```
 
 ## 4. Phyloseq Integration & Data Structuring
@@ -2368,7 +2401,7 @@ Before creating the Phyloseq object, the sample metadata table must be formatted
 -   **Format metadata table.** Prepare the sample metadata by organizing identifiers and ensuring row names exactly match the sample names in the sequence table, a requirement for Phyloseq.
 
     ```{r}
-    # Create sample metadata dataframe for Phylose
+    # Create sample metadata dataframe for Phyloseq
     # Attention! Add other metadata columns if needed
     all_samdf <- primers_n_samples %>% 
       dplyr::select("Project",
@@ -2403,15 +2436,29 @@ Before creating the Phyloseq object, the sample metadata table must be formatted
 -   **Check sample consistency.** Verify if all sequences in the ASV table have matching metadata in the newly created sample dataframe.
 
     ```{r}
-    # Check consistency between sequence table and metadata
-    seq_names <- rownames(mergers_seqtab.nochim)
+    # Get sample names from each seqtab
+    seq_names_merged <- rownames(mergers_seqtab.nochim)
+
+    # Unmerged samples
+    seq_names_R1 <- rownames(R1_seqtab.nochim)
+    seq_names_R2 <- rownames(R2_seqtab.nochim)
+
+    all_seq_names <- c(seq_names_merged, 
+                       seq_names_R1, 
+                       seq_names_R2) %>%
+      unique()
+
+    # Sample names from metadata
     meta_names <- rownames(all_samdf)
 
-    if (!all(seq_names %in% meta_names)) {
-      warning("Caution: Some samples in the sequence table are missing from metadata!")
-      print(setdiff(seq_names, meta_names))
+    # Checking if all samples are in metadata
+    missing_in_meta <- setdiff(all_seq_names, meta_names)
+
+    if (length(missing_in_meta) > 0) {
+      warning("Caution: Some samples in the sequence tables are missing from metadata!")
+      print(missing_in_meta)
     } else {
-      message("All samples matched correctly between Sequence Table and Metadata.")
+      message("All samples matched correctly between Sequence Tables and Metadata.")
     }
     ```
 
@@ -2432,9 +2479,9 @@ With validated metadata in hand, the ASV abundance table and sample data are com
 
     ```{r}
     # Create Phyloseq object from DADA2 unmerged Concat reads
-    concat_ps <- phyloseq::phyloseq(phyloseq::otu_table(concat_seqtab.nochim,
-                                                    taxa_are_rows = FALSE),
-                                phyloseq::sample_data(all_samdf))
+    # concat_ps <- phyloseq::phyloseq(phyloseq::otu_table(concat_seqtab.nochim,
+    #                                                     taxa_are_rows = FALSE),
+    #                                 phyloseq::sample_data(all_samdf))
 
     # Create Phyloseq object from DADA2 unmerged R1 reads
     R1_ps <- phyloseq::phyloseq(phyloseq::otu_table(R1_seqtab.nochim,
@@ -2463,11 +2510,11 @@ With validated metadata in hand, the ASV abundance table and sample data are com
 
     ```{r}
     # Concat data
-    concat_ps_tbl <- phyloseq::psmelt(concat_ps) %>%
-      as_tibble() %>%
-      mutate(`Read origin` = "Concat") %>%
-      filter(Abundance > 0) %>%
-      dplyr::rename("ASV (Sequence)" = OTU) 
+    # concat_ps_tbl <- phyloseq::psmelt(concat_ps) %>%
+    #   as_tibble() %>%
+    #   mutate(`Read origin` = "Concat") %>%
+    #   filter(Abundance > 0) %>%
+    #   dplyr::rename("ASV (Sequence)" = OTU) 
 
     # R1 reads data
     R1_ps_tbl <- phyloseq::psmelt(R1_ps) %>%
@@ -2491,9 +2538,9 @@ With validated metadata in hand, the ASV abundance table and sample data are com
     all_ps_tbl <- mergers_ps_tbl %>%
       
       #Bind unmerged data
-      # dplyr::bind_rows(concat_ps_tbl,
-                       # R1_ps_tbl,
-                       # R2_ps_tbl) %>%
+      dplyr::bind_rows(#concat_ps_tbl,
+                       R1_ps_tbl,
+                       R2_ps_tbl) %>%
       
       dplyr::select(-Sample) %>%  # Remove duplicate/confusing columns if necessary
       dplyr::rename(Sample = sample_Sample) %>% # Standardize Sample column name
