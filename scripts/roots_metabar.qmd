@@ -91,7 +91,7 @@ chunk_output_type: console
     cutadapt <- "/usr/local/bin/cutadapt"
     ```
 
--   **Load custom functions.** Custom functions for taxonomy retrievel.
+-   **Load custom functions.**
 
     ```{r}
     # Demultiplex custom function
