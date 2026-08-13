@@ -64,6 +64,16 @@ chunk_output_type: console
     list.files(prjct_path)
     ```
 
+-   **Load custom functions.** 
+
+    ```{r}
+    # Retrieve taxID custom function
+    source("/home/gabriel/functions/retrieve_taxid.R")
+    
+    # Retrieve complete taxonomy custom function
+    source("/home/gabriel/functions/retrieve_taxonomy.R")
+    ```
+
 ### Raw data aquisition
 
 -   **Upload raw metadata sheets**
@@ -86,28 +96,58 @@ chunk_output_type: console
 
 ## 2. Raw data processing
 
--   **Format tables.** Merge leaf metadata with the sample sequences
+-   **Format tables.** Merge tissue reference metadata with the sample sequences
 
     ```{r}
     # Redux metadata table for previous data screening 
     tanguro_leaf_metadata_rdx <- tanguro_leaf_metadata %>% 
       select(c(Inventary_code, Popular_name, barcode_tag))
 
-    # Full output data: Sanger reference sequences and their metadata 
-    metagen_output_full <- metagen_output %>% 
+    # Associate Sanger reference sequences to correspondent metadata 
+    database_output <- metagen_output %>% 
       left_join(tanguro_leaf_metadata, by = c("Popular_name", 
                                           "barcode_tag")) %>% 
       group_by(Popular_name) %>%
       fill(-Popular_name, .direction = "downup") %>%
       ungroup() %>% 
       mutate(`Species_clean` = sub(" .*", "", Species),
-             Species_full = paste(Genus, Species_clean))
-    
-    # Create Header for fasta output
-    database_output_tbl <- metagen_output_full %>%
-      mutate(Header = paste0(barcode_tag, "-", Genus, 
+             Species_full = paste(Genus, Species_clean),
+             Header = paste0(barcode_tag, "-", Genus, 
                              "_", Species_clean)) %>% 
       relocate(Header, Species_full)
+    ```
+
+-   **Retrieve full taxonomy.**
+
+    ```{r}
+    # Retrive taxIDs
+    sequence_taxids <- retrieve_taxid(unique(database_output$Genus),
+                                      ask=TRUE)
+
+    # Retrieve complete taxonomy
+    curated_taxonomy <- retrieve_taxonomy(sequence_taxids) %>%
+      select(kingdom, phylum, class, order, family, genus, uid) %>%
+      rename_with(stringr::str_to_title)
+    
+    # Join with reference and metadata
+    database_output_full <- database_output %>% 
+      left_join(curated_taxonomy, by = c("Genus", "Family")) %>% 
+      relocate(Kingdom,
+               Phylum,
+               Class,
+               Order,
+               Family,
+               Genus,
+               Species_full,
+               Species)
+    ```
+
+-   **Export full output table.**
+
+    ```{r}
+    writexl::write_xlsx(database_output_full,
+                        path = file.path(results_path, 
+                                         paste0("tanguro_DB", Sys.Date(), ".xlsx")))
     ```
 
 ## 3. Create DNA reference database
@@ -149,10 +189,10 @@ chunk_output_type: console
 -   **Save DNA reference database fasta file.** 
 
     ```{r}
-    writeXStringSet(tanguro_DB_nogaps, filepath = paste0("tanguro_DB_noGaps_", Sys.Date(), ".fasta"))
+    writeXStringSet(tanguro_DB_nogaps, 
+                    filepath = paste0(DB_path, "tanguro_DB_noGaps_", Sys.Date(), ".fasta"))
     ```
 
- 
 ## 4. Create and plot DNA reference tree
 
 -   **Create Neighbor-Joining Tree.**
@@ -198,4 +238,3 @@ chunk_output_type: console
            units = "cm",
            dpi = 600)
     ```
-
