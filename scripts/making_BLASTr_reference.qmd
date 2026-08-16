@@ -83,15 +83,15 @@ chunk_output_type: console
     metagen_output <-  
       read_csv(paste0(data_path, "/", "barcode/",
                       "samples_metagen-output.csv"))%>%
-      tibble() %>% 
-      select(-c(old_Tag, Tag))
+      tibble()
 
     # Tanguro's sampling metadata 
     tanguro_leaf_metadata <- 
       read_csv(paste0(data_path,"/", "barcode/",
                       "leaf_sampling_tanguro_metadata.csv")) %>%
       tibble() %>% 
-      select(-c(Tag))
+      select(-c(Tag, Sampling_date)) %>% 
+      unique()
     ```
 
 ## 2. Raw data processing
@@ -99,22 +99,18 @@ chunk_output_type: console
 -   **Format tables.** Merge tissue reference metadata with the sample sequences
 
     ```{r}
-    # Redux metadata table for previous data screening 
-    tanguro_leaf_metadata_rdx <- tanguro_leaf_metadata %>% 
-      select(c(Inventary_code, Popular_name, barcode_tag))
-
     # Associate Sanger reference sequences to correspondent metadata 
     database_output <- metagen_output %>% 
-      left_join(tanguro_leaf_metadata, by = c("Popular_name", 
-                                          "barcode_tag")) %>% 
+      left_join(tanguro_leaf_metadata, by = c("Popular_name")) %>% 
       group_by(Popular_name) %>%
       fill(-Popular_name, .direction = "downup") %>%
       ungroup() %>% 
       mutate(`Species_clean` = sub(" .*", "", Species),
              Species_full = paste(Genus, Species_clean),
-             Header = paste0(barcode_tag, "-", Genus, 
-                             "_", Species_clean)) %>% 
-      relocate(Header, Species_full)
+             Header = paste0(barcode_tag, " ", Genus, 
+                             " ", Species_clean)) %>% 
+      relocate(Header, Species_full) %>% 
+      unique()
     ```
 
 -   **Retrieve full taxonomy.**
@@ -131,7 +127,8 @@ chunk_output_type: console
     
     # Join with reference and metadata
     database_output_full <- database_output %>% 
-      left_join(curated_taxonomy, by = c("Genus", "Family")) %>% 
+      left_join(curated_taxonomy, by = c("Genus", 
+                                         "Family")) %>% 
       relocate(Kingdom,
                Phylum,
                Class,
@@ -150,16 +147,16 @@ chunk_output_type: console
                                          paste0("tanguro_DB", Sys.Date(), ".xlsx")))
     ```
 
-## 3. Create DNA reference database
+## 3. Create DNA reference fasta
 
 -   **Create DNAStringSet object.**
 
     ```{r}
     # Retrieve reference sequencers
-    tanguro_DB <- DNAStringSet(database_output_tbl$Sequence)
+    tanguro_DB <- DNAStringSet(database_output$Sequence)
     
     # Retrieve sequence's headers
-    names(tanguro_DB) <- database_output_tbl$Header
+    names(tanguro_DB) <- database_output$Header
     
     # Reorder based on names
     tanguro_DB <- tanguro_DB[order(names(tanguro_DB))]
@@ -189,8 +186,10 @@ chunk_output_type: console
 -   **Save DNA reference database fasta file.** 
 
     ```{r}
+    DB_file <- paste0(DB_path, "tanguro_DB_noGaps_", Sys.Date(), ".fasta")
+    
     writeXStringSet(tanguro_DB_nogaps, 
-                    filepath = paste0(DB_path, "tanguro_DB_noGaps_", Sys.Date(), ".fasta"))
+                    filepath = DB_file)
     ```
 
 ## 4. Create and plot DNA reference tree
@@ -238,3 +237,22 @@ chunk_output_type: console
            units = "cm",
            dpi = 600)
     ```
+## 5.Create BLAST reference
+
+-   **Execute on Bash**
+
+    ```{R}
+    # Confirm FASTA header format
+    system2("head", DB_file)
+    
+    # Execute makeblastdb
+    cmd <- "makeblastdb"
+    args <- c("-in", DB_file,
+              "-dbtype", "nucl",
+              "-parse_seqids",
+              "-blastdb_version", "5",
+              "-hash_index")
+    
+    system2(cmd, args = args)
+    ```
+  
