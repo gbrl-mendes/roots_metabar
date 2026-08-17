@@ -25,12 +25,10 @@ chunk_output_type: console
     library(DECIPHER)
     library(future)
     library(viridis)
-    library(ggh4x)
     library(furrr)
     library(writexl)
     library(tictoc)
     library(BLASTr)
-    library(janitor)
     ```
 
 ### Directory Management
@@ -2579,6 +2577,15 @@ With validated metadata in hand, the ASV abundance table and sample data are com
 
     # Show table
     View(all_ps_tbl)
+    ```
+
+-   **Overview about merged and unmerged reads.**
+  
+    ```{r}
+    all_ps_tbl %>%
+      group_by(Primer, Lib, Type, `Read origin`) %>%
+      summarise(Total_abundance = sum(Abundance)) %>%
+      View()
     ```
 
 ### Check ASV Length Distribution
