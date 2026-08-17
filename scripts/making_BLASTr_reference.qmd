@@ -102,11 +102,13 @@ chunk_output_type: console
     # Associate Sanger reference sequences to correspondent metadata 
     database_output <- metagen_output %>% 
       left_join(tanguro_leaf_metadata, by = c("Popular_name")) %>% 
+      select(-c(Family)) %>% 
       group_by(Popular_name) %>%
       fill(-Popular_name, .direction = "downup") %>%
       ungroup() %>% 
       mutate(`Species_clean` = sub(" .*", "", Species),
              Species_full = paste(Genus, Species_clean),
+             barcode_tag = paste0(barcode_tag, "-", primer),
              Header = paste0(barcode_tag, " ", Genus, 
                              " ", Species_clean)) %>% 
       relocate(Header, Species_full) %>% 
@@ -118,7 +120,7 @@ chunk_output_type: console
     ```{r}
     # Retrive taxIDs
     sequence_taxids <- retrieve_taxid(unique(database_output$Genus),
-                                      ask=TRUE)
+                                      ask = TRUE)
 
     # Retrieve complete taxonomy
     curated_taxonomy <- retrieve_taxonomy(sequence_taxids) %>%
@@ -127,8 +129,7 @@ chunk_output_type: console
     
     # Join with reference and metadata
     database_output_full <- database_output %>% 
-      left_join(curated_taxonomy, by = c("Genus", 
-                                         "Family")) %>% 
+      left_join(curated_taxonomy, by = c("Genus")) %>% 
       relocate(Kingdom,
                Phylum,
                Class,
@@ -154,6 +155,7 @@ chunk_output_type: console
     ```{r}
     # Retrieve reference sequencers
     tanguro_DB <- DNAStringSet(database_output$Sequence)
+    BrowseSeqs(tanguro_DB)
     
     # Retrieve sequence's headers
     names(tanguro_DB) <- database_output$Header
@@ -237,6 +239,7 @@ chunk_output_type: console
            units = "cm",
            dpi = 600)
     ```
+
 ## 5.Create BLAST reference
 
 -   **Execute on Bash**
@@ -245,7 +248,7 @@ chunk_output_type: console
     # Confirm FASTA header format
     system2("head", DB_file)
     
-    # Execute makeblastdb
+    # Execute BLAST makeblastdb
     cmd <- "makeblastdb"
     args <- c("-in", DB_file,
               "-dbtype", "nucl",
