@@ -28,6 +28,8 @@ chunk_output_type: console
     library(furrr)
     library(writexl)
     library(tictoc)
+    library(rlang)
+    library(purrr)
     library(BLASTr)
     ```
 
@@ -979,10 +981,10 @@ All other orientation/read combinations should be near zero. *Typical examples:*
 
 **Case 2 — Standard library, amplicon shorter than the read length (read-through occurs).** When the amplicon is shorter than the read length, R1 reads through the entire insert and into the REV primer site, encountering it from the antisense direction — it therefore appears as `RevComp` at the 3' end of R1. Symmetrically, R2 reads through and encounters the FWD primer site as `RevComp` at its 3' end. The expected result is:
 
-| Primer | R1 | R2 |
+| Primer  | R1                                       | R2                                       |
 |:-----------------|:--------------------------|:--------------------------|
-| **FWD** | **Forward** (good, 5' start of R1) | **RevComp** (read-through, 3' end of R2) |
-| **REV** | **RevComp** (read-through, 3' end of R1) | **Forward** (good, 5' start of R2) |
+| **FWD** | **Forward** (good, 5' start of R1)       | **RevComp** (read-through, 3' end of R2) |
+| **REV** | **RevComp** (read-through, 3' end of R1) | **Forward** (good, 5' start of R2)       |
 
 The `RevComp` read-through signal is not an error — it is expected and **must** be handled by Cutadapt, which trims both the 5' primer and the 3' reverse-complement of the opposite primer from each read. The proportion of reads with read-through signal will vary with the length distribution of the target region: short amplicons will show near-equal counts in `Forward` and `RevComp`, while longer ones will show a weaker `RevComp` signal. *Typical examples:* ITS1/ITS2 fungal barcodes; short COI barcode fragments; short 16S V4 amplicons sequenced with 2×300 bp reads.
 
@@ -997,13 +999,13 @@ However, if you demultiplexed your data using the `dmx_metabar(mixed_orientation
 
 [**Troubleshooting:**]{.underline}
 
-| Pattern observed in the plot | Likely cause | Recommended fix |
+| Pattern observed in the plot                                                                 | Likely cause                                                                                                | Recommended fix                                                                                                                                               |
 |:-------------------|:----------------------|:----------------------------|
-| FWD in R2/**Forward** (strong); REV in R1/**Forward** (strong) | R1/R2 file paths are swapped, or FWD/REV primer definitions are swapped in `primersnsamples` | Swap R1↔R2 path assignments in `sampleidxtbl`, or swap FWD and REV primer entries |
-| FWD in R1/**RevComp** (strong); REV in R2/**RevComp** (strong); near-zero **Forward** signal | Both primer sequences were entered in reverse-complement direction (e.g., copied from the antisense strand) | Replace both: `FWD <-      FWD.orient[["RevComp"]]` and `REV <- REV.orient[["RevComp"]]` |
-| REV in R2/**RevComp** instead of R2/**Forward** (FWD signal looks correct) | REV primer sequence was entered as its own reverse complement | Replace: `REV <-      REV.orient[["RevComp"]]` before proceeding |
-| FWD and REV in both R1/**Forward** and R2/**Forward** in roughly equal proportions | Mixed orientation library normalization failed or was skipped | Ensure `mixed_orientation = TRUE` was set during demultiplexing so Cutadapt's `--revcomp` normalizes the pairs automatically. |
-| No primer detected in any orientation in any file | Wrong primer pair selected; reads are already pre-trimmed; mismatches \> 1; incorrect file paths | Verify primer sequences against the wet-lab protocol; confirm reads are not pre-trimmed (check FastQC/MultiQC report); increase `max.mismatch` to 2 as a test |
+| FWD in R2/**Forward** (strong); REV in R1/**Forward** (strong)                               | R1/R2 file paths are swapped, or FWD/REV primer definitions are swapped in `primersnsamples`                | Swap R1↔R2 path assignments in `sampleidxtbl`, or swap FWD and REV primer entries                                                                             |
+| FWD in R1/**RevComp** (strong); REV in R2/**RevComp** (strong); near-zero **Forward** signal | Both primer sequences were entered in reverse-complement direction (e.g., copied from the antisense strand) | Replace both: `FWD <-      FWD.orient[["RevComp"]]` and `REV <- REV.orient[["RevComp"]]`                                                                      |
+| REV in R2/**RevComp** instead of R2/**Forward** (FWD signal looks correct)                   | REV primer sequence was entered as its own reverse complement                                               | Replace: `REV <-      REV.orient[["RevComp"]]` before proceeding                                                                                              |
+| FWD and REV in both R1/**Forward** and R2/**Forward** in roughly equal proportions           | Mixed orientation library normalization failed or was skipped                                               | Ensure `mixed_orientation = TRUE` was set during demultiplexing so Cutadapt's `--revcomp` normalizes the pairs automatically.                                 |
+| No primer detected in any orientation in any file                                            | Wrong primer pair selected; reads are already pre-trimmed; mismatches \> 1; incorrect file paths            | Verify primer sequences against the wet-lab protocol; confirm reads are not pre-trimmed (check FastQC/MultiQC report); increase `max.mismatch` to 2 as a test |
 
 ### Save the Environment!
 
@@ -2580,7 +2582,7 @@ With validated metadata in hand, the ASV abundance table and sample data are com
     ```
 
 -   **Overview about merged and unmerged reads.**
-  
+
     ```{r}
     all_ps_tbl %>%
       group_by(Primer, Lib, Type, `Read origin`) %>%
@@ -2669,12 +2671,15 @@ Once the ASV table is validated and integrated into the Phyloseq object, each un
 -   **Run Parallel BLAST.** Execute BLASTn in batches using the `BLASTr` package to handle large datasets efficiently without overloading memory.
 
     ```{r}
+    # Get the length of asvs_blast_all
+    length(asvs_blast_all)
+
     # Define chunk size for batch processing (e.g., 20,000 sequences per batch)
-    chunk_size  <- 50
+    chunk_size  <- 500
     asv_chunks  <- split(asvs_blast_all, ceiling(seq_along(asvs_blast_all) / chunk_size))
 
     # Define local database paths
-    db_paths <- "/data/databases/core_nt/core_nt /data/databases/LGC12Sdb/mai25/LGC12Sdb_complete_noGaps-2025-05-21.fasta"
+    db_paths <- "/data/databases/core_nt_OLD/core_nt /home/gabriel/projetos/roots_metabar/data/reference_database/tanguro_DB_noGaps_2026-08-16.fasta"
 
     # Execute BLASTn across all chunks
     blast_results_list <- list()
@@ -2688,9 +2693,7 @@ Once the ASV table is validated and integrated into the Phyloseq object, each un
       blast_results_list[[i]] <- BLASTr::parallel_blast(
         asv_chunks[[i]],
         db_path = db_paths,
-        out_file = file.path(blast_path, paste0("blast_out_res_", i, ".csv")),
-        out_RDS = file.path(blast_path, paste0("blast_out_res_", i, ".RDS")),
-        total_cores = 60,       # Adjust based on server capacity
+        total_cores = 70,       # Adjust based on server capacity
         num_threads = 2,
         blast_type = "blastn",
         perc_id = 80,
@@ -2718,74 +2721,90 @@ Once the ASV table is validated and integrated into the Phyloseq object, each un
 
 ### Correct TaxIDs
 
--   **Fill missing TaxID.** For hits lacking TaxIDs across all databases, extract genus/species names from subject headers and perform parallel NCBI lookups using `myTAI::taxonomy`, updating `1_staxid`, `2_staxid`, and `3_staxid` columns with success rates reported per hit.
+-   **Search missing TaxID.** Extract genus/species names from subject headers for hits lacking TaxIDs across all databases, and execute an interactive NCBI query using the `retrieve_taxid.R` function.
 
     ```{r}
-    # Helper function to retrieve TaxID from organism name
-    get_taxid <- function(organism_name) {
-      result <- tryCatch({
-        myTAI::taxonomy(organism = organism_name,
-                        db = "ncbi",
-                        output = "taxid"
-                        )$id[1]
-        }, error = function(e) NA_character_)
-      
-      return(result)
+    source("/home/gabriel/functions/retrieve_taxid.R")
+
+    hit_columns <- list(
+      c(1, "1_staxid", "1_subject header"),
+      c(2, "2_staxid", "2_subject header"),
+      c(3, "3_staxid", "3_subject header"))
+
+    extract_genus <- function(x) {
+      genus <- stringr::word(x, 1)
+      dplyr::if_else(genus == "cf.", stringr::word(x, 2), genus)
     }
 
-    # List of columns to process: (hit_number, staxid_column, subject_header_column, DB_column)
-    hit_columns <- list(c(1, "1_staxid", "1_subject header", "1_DB"),
-                        c(2, "2_staxid", "2_subject header", "2_DB"),
-                        c(3, "3_staxid", "3_subject header", "3_DB"))
+    # Store masks and names for each hit
+    lookup_data <- vector("list", length(hit_columns))
 
-    # Process each hit (1st, 2nd, and 3rd)
-    for (hit_info in hit_columns) {
-      hit_num <- hit_info[1]
-      staxid_col <- hit_info[2]
-      subject_header_col <- hit_info[3]
-      db_col <- hit_info[4]
+    for (i in seq_along(hit_columns)) {
+      staxid_col <- hit_columns[[i]][2]
+      subject_header_col <- hit_columns[[i]][3]
       
-      message("Processing TaxID lookup for hit ", hit_num, " (", staxid_col, ")")
+      missing_taxid_mask <- (
+    !is.na(blast_res_full[[subject_header_col]]) &
+      nzchar(blast_res_full[[subject_header_col]]) &
+      (is.na(blast_res_full[[staxid_col]]) |
+         blast_res_full[[staxid_col]] == "N/A"))
       
-      # Identify rows where TaxID is missing (NA or "N/A")
-      missing_taxid_mask <- is.na(blast_res_full[[staxid_col]]) | 
-                            blast_res_full[[staxid_col]] == "N/A"
+      organism_names <- extract_genus(blast_res_full[[subject_header_col]][missing_taxid_mask])
       
-      if (!any(missing_taxid_mask)) {
-        message("  No missing TaxIDs found for ", staxid_col)
-        next
-      }
+      lookup_data[[i]] <- list(mask = missing_taxid_mask,
+                               organism_names = organism_names)
+    }
+
+    # One global lookup: one request per unique genus
+    all_organism_names <- unlist(lapply(lookup_data, `[[`, "organism_names"),
+                                 use.names = FALSE)
+
+    unique_organism_names <- unique(all_organism_names[!is.na(all_organism_names) & all_organism_names != ""])
+
+    message("========================================")
+    message("Global TaxID lookup")
+    message("========================================")
+    message(
+      "  ", length(all_organism_names), " missing TaxID entries; ",
+      length(unique_organism_names), " unique genera to query")
+
+    if (length(unique_organism_names) > 0) {
+      taxid_df <- retrieve_taxid(unique_organism_names, ask = TRUE)
+    } else {
+      taxid_df <- data.frame(genus = character(),
+                             uid = character(),
+                             stringsAsFactors = FALSE)
+    }
+    ```
+
+-   **Update columns and generate summary.** Map the retrieved TaxIDs back to the dataset updating 1_staxid, 2_staxid, and 3_staxid, and compute resolution metrics per hit.
+
+    ```{r}
+    # Fill each hit from the same global lookup table
+    summary_stats <- vector("list", length(hit_columns))
+
+    for (i in seq_along(hit_columns)) {
+      hit_num <- hit_columns[[i]][1]
+      staxid_col <- hit_columns[[i]][2]
       
-      # Filter only rows with missing TaxID
-      missing_rows <- blast_res_full[missing_taxid_mask, ]
+      missing_taxid_mask <- lookup_data[[i]]$mask
+      organism_names <- lookup_data[[i]]$organism_names
       
-      message("  Found ", sum(missing_taxid_mask), " missing TaxIDs to lookup")
+      taxids <- taxid_df$uid[match(organism_names, taxid_df$genus)]
       
-      # Extract organism_name from first word of subject header
-      organism_names <- 
-        stringr::word(missing_rows[[subject_header_col]], 1)
-      
-      # Lookup TaxIDs in parallel (uses furrr for acceleration)
-      taxids <- 
-        furrr::future_map_chr(organism_names,
-                              get_taxid,
-                              .options = furrr::furrr_options(seed = TRUE)
-      )
-      
-      # Update only rows that had missing TaxID
       blast_res_full[[staxid_col]][missing_taxid_mask] <- taxids
       
-      # Success report
-      success_rate <- mean(!is.na(taxids)) * 100
-      message("  Success rate: ", round(success_rate, 1), "% (", 
-              sum(!is.na(taxids)), "/", length(taxids), " lookups)")
+      n_missing <- length(taxids)
+      n_found <- sum(!is.na(taxids))
+      n_unresolved <- n_missing - n_found
+      success_rate <- if (n_missing > 0) 100 * n_found / n_missing else 100
+      
+      summary_stats[[i]] <- data.frame(hit = as.integer(hit_num),
+                                       missing = n_missing,
+                                       found = n_found,
+                                       unresolved = n_unresolved,
+                                       success_rate = round(success_rate, 1))
     }
-
-    # Final summary
-    message("\nFinal TaxID coverage:")
-    message("Hit 1: ", round(mean(!is.na(blast_res_full$`1_staxid`)) * 100, 1), "%")
-    message("Hit 2: ", round(mean(!is.na(blast_res_full$`2_staxid`)) * 100, 1), "%")
-    message("Hit 3: ", round(mean(!is.na(blast_res_full$`3_staxid`)) * 100, 1), "%")
     ```
 
 ### Save the Environment!
@@ -2796,7 +2815,7 @@ Once the ASV table is validated and integrated into the Phyloseq object, each un
     base::save.image(paste0(env_path, "/", "5_Tax_assigment-", Sys.Date(), ".RData"))
     ```
 
-## 6. Taxonomy Curation
+## 6. Taxonomy Pre-Curation
 
 Following the Taxonomic Assignment, the raw taxonomic hits must be curated before they can be assigned to the final ASV dataset. This section refines the BLAST results by filtering out uninformative matches, standardizing species nomenclature, and retrieving complete taxonomic lineages from NCBI. Finally, missing intermediate taxonomic ranks are imputed to ensure a continuous hierarchy before joining the curated taxonomy back into the main Phyloseq-derived dataframe.
 
@@ -2900,14 +2919,54 @@ With reliable TaxIDs established, the pipeline queries NCBI to download the full
 
     ```{r}
     # Identify unique TaxIDs to query
-    taxids_to_search <- unique(na.omit(blast_res_processed$query_taxID))
+    # taxids_to_search <- unique(na.omit(blast_res_processed$query_taxID))
 
     # Execute parallel taxonomy retrieval
-    taxonomy_tbl <- 
-      BLASTr::parallel_get_tax(organisms_taxIDs = taxids_to_search,
-                               retry_times = 5,
-                               verbose = "full") %>%
+    # taxonomy_tbl <- 
+    #   BLASTr::parallel_get_tax(organisms_taxIDs = taxids_to_search,
+    #                            retry_times = 5,
+    #                            verbose = "full") %>%
+    #   BiocGenerics::unique()
+
+    # Retrieve complete taxonomy custom function
+    source("/home/gabriel/functions/retrieve_taxonomy.R")
+
+    taxids_to_search <- blast_res_processed %>% 
+      dplyr::mutate(genus = stringr::word(`1_subject header`)) %>% 
+      dplyr::select(genus,
+                    query_taxID) %>% 
+      dplyr::rename(uid = query_taxID) %>% 
+      unique()
+
+    # Identify unique TaxIDs to query
+    taxonomy_tbl_full <- 
+      retrieve_taxonomy(taxids_to_search) %>%
       BiocGenerics::unique()
+      
+    # Select only the informative columns
+    taxonomy_tbl <- 
+      taxonomy_tbl_full %>% 
+      dplyr::select(-c(`cellular root`, clade, domain, tribe, `no rank`, subtribe,
+                       forma, subspecies, subgenus, section, varietas, genotype, `NA`)) %>%
+      dplyr::rename(Sci_name = species,
+                    query_taxID = uid,
+                    `Superkingdom (NCBI)` = subkingdom, 
+                    `Kingdom (NCBI)` = kingdom, 
+                    `Phylum (NCBI)` = phylum, 
+                    `Subphylum (NCBI)` = subphylum, 
+                    `Class (NCBI)` = class, 
+                    `Subclass (NCBI)` = subclass, 
+                    `Order (NCBI)` = order, 
+                    `Suborder (NCBI)` = suborder, 
+                    `Family (NCBI)` = family, 
+                    `Subfamily (NCBI)` = subfamily, 
+                    `Genus (NCBI)` = `genus_rank`) %>% 
+      dplyr::relocate(Sci_name, 
+                      `Genus (NCBI)`)
+
+    # Check if the automatic Species name (Sci_name) and Genus (`Genus (NCBI)`) colunms are identical
+    sci_name_genus_df <- taxonomy_tbl %>%
+      dplyr::filter(is.na(Sci_name) | stringr::word(Sci_name, 1) != `Genus (NCBI)`)
 
     # Check for missing IDs (failed queries)
     missing_taxids <- setdiff(taxids_to_search, taxonomy_tbl$query_taxID)
@@ -2929,10 +2988,9 @@ Biological databases occasionally lack designations for certain intermediate ran
     taxonomy_tbl_filled <- taxonomy_tbl %>%
       
       # Fill missing Genus entries by extracting the first word from the Sci_name
-      dplyr::mutate(
-        `Genus (NCBI)` = dplyr::case_when(
-          is.na(`Genus (NCBI)`) & !is.na(Sci_name) ~ stringr::word(Sci_name, 1),
-          TRUE ~ `Genus (NCBI)`),
+      dplyr::mutate(`Genus (NCBI)` = dplyr::case_when(
+        is.na(`Genus (NCBI)`) & !is.na(Sci_name) ~ stringr::word(Sci_name, 1),
+        TRUE ~ `Genus (NCBI)`),
          
         # Manually assign missing Superkingdoms based on specific Kingdoms and Phyla
         `Superkingdom (NCBI)` = dplyr::case_when(
