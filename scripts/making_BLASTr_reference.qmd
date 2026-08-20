@@ -64,12 +64,12 @@ chunk_output_type: console
     list.files(prjct_path)
     ```
 
--   **Load custom functions.** 
+-   **Load custom functions.**
 
     ```{r}
     # Retrieve taxID custom function
     source("/home/gabriel/functions/retrieve_taxid.R")
-    
+
     # Retrieve complete taxonomy custom function
     source("/home/gabriel/functions/retrieve_taxonomy.R")
     ```
@@ -126,7 +126,7 @@ chunk_output_type: console
     curated_taxonomy <- retrieve_taxonomy(sequence_taxids) %>%
       select(kingdom, phylum, class, order, family, genus, uid) %>%
       rename_with(stringr::str_to_title)
-    
+
     # Join with reference and metadata
     database_output_full <- database_output %>% 
       left_join(curated_taxonomy, by = c("Genus")) %>% 
@@ -156,40 +156,40 @@ chunk_output_type: console
     # Retrieve reference sequencers
     tanguro_DB <- DNAStringSet(database_output$Sequence)
     BrowseSeqs(tanguro_DB)
-    
+
     # Retrieve sequence's headers
     names(tanguro_DB) <- database_output$Header
-    
+
     # Reorder based on names
     tanguro_DB <- tanguro_DB[order(names(tanguro_DB))]
-    
+
     # Visualize DB
     BrowseSeqs(tanguro_DB)
     ```
-    
+
 -   **Edit DNAStringSet object.**
 
     ```{r}
     # Remove gaps
     tanguro_DB_nogaps <- RemoveGaps(tanguro_DB)
     BrowseSeqs(tanguro_DB_nogaps)
-    
+
     # Orient nucleotides
     tanguro_DB_nogaps <- OrientNucleotides(tanguro_DB_nogaps)
     BrowseSeqs(tanguro_DB_nogaps)
-    
+
     # Align sequences (didatic porpuses)
     tanguro_DB_aligned <- tanguro_DB_nogaps %>% AlignSeqs(refinements = 700,
                                                           iterations = 700,
                                                           verbose = TRUE)
     BrowseSeqs(tanguro_DB_aligned)
     ```
- 
--   **Save DNA reference database fasta file.** 
+
+-   **Save DNA reference database fasta file.**
 
     ```{r}
     DB_file <- paste0(DB_path, "tanguro_DB_noGaps_", Sys.Date(), ".fasta")
-    
+
     writeXStringSet(tanguro_DB_nogaps, 
                     filepath = DB_file)
     ```
@@ -205,13 +205,13 @@ chunk_output_type: console
                               substitutionMatrix = "clustalw",
                               type = "dna",
                               order = "input")
-    
+
     # Convert alignment to phyDat
     phy_data <- as.phyDat(tanguro_DB_aligned, type = "DNA")
-    
+
     #Calculate distance
     dist_phy <- dist.ml(phy_data, model = "JC69")
-    
+
     # Create NJ tree
     tanguro_tree_nj <- NJ(dist_phy)
     ```
@@ -225,9 +225,9 @@ chunk_output_type: console
       geom_treescale() +
       theme_tree2() +
       labs(title = "Tanguro's DNA Reference Database Tree")
-    
+
     plot(tanguro_tree_plot)
-    
+
     # Save tree plot
     ggsave(file = paste0(figs_path, "/", 
                                     PRJ, 
@@ -247,7 +247,7 @@ chunk_output_type: console
     ```{R}
     # Confirm FASTA header format
     system2("head", DB_file)
-    
+
     # Execute BLAST makeblastdb
     cmd <- "makeblastdb"
     args <- c("-in", DB_file,
@@ -255,7 +255,6 @@ chunk_output_type: console
               "-parse_seqids",
               "-blastdb_version", "5",
               "-hash_index")
-    
+
     system2(cmd, args = args)
     ```
-  
