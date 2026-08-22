@@ -8,7 +8,7 @@ editor_options:
 chunk_output_type: console
 ---
 
-# Tanguro Roots Metabarcoding
+# Tanguro Roots Metabarcoding Pipeline
 
 ## 1. Setup & Configuration
 
@@ -2805,6 +2805,8 @@ Once the ASV table is validated and integrated into the Phyloseq object, each un
                                        unresolved = n_unresolved,
                                        success_rate = round(success_rate, 1))
     }
+
+    print(summary_stats)
     ```
 
 ### Save the Environment!
@@ -2826,50 +2828,51 @@ A single ASV query can return multiple alignments, some of which may point to un
 -   **Filter low-quality hits.** Remove uninformative descriptions and select the best reliable hit among the top 3 alignments using a vectorized approach.
 
     ```{r}
+    # Verify subject header columns to ensure what can be considered a bad hit 
+    blast_res_processed %>% select(`1_subject header`,
+                                   `2_subject header`,
+                                   `3_subject header`) %>% unique() %>% pull() %>% sort()
+
     # Define patterns for non-informative hits
-    bad_res_ids <- paste0(c("Uncultured", "Uncultured organism",
+    bad_res_ids <- paste0(c("Uncultured", 
+                            "uncultured",
+                            "Uncultured archaeon", 
+                            "Uncultured organism",
+                            "Uncultured bacterium",
+                            "Uncultured Candidatus",
                             "Uncultured prokaryote",
                             "Eukaryotic synthetic construct",
                             "16S rRNA amplicon fragment",
                             "Invertebrate environmental", 
-                            "Uncultured Candidatus", "Uncultured bacterium",
-                            "Uncultured archaeon", 
                             "Complete Metagenome-Assembled", 
-                            "PREDICTED: Nomascus"), collapse = "|")
+                            "PREDICTED: Nomascus",
+                            "(Citrus unshiu x Citrus sinensis)"), collapse = "|")
 
     # Vectorized selection of best hit (1st, 2nd, or 3rd)
-    blast_res_processed <- blast_res_full %>%
-      dplyr::mutate(is_bad_1 = stringr::str_detect(`1_subject header`,
-                                                   bad_res_ids),
-                    is_bad_2 = stringr::str_detect(`2_subject header`,
-                                                   bad_res_ids),
-                    is_bad_3 = stringr::str_detect(`3_subject header`,
-                                                   bad_res_ids),
-    # Select best valid hit
-    Selected_Hit_Origin = 
-      dplyr::case_when(!is_bad_1 ~ "1", is_bad_1 & !is.na(`2_subject header`)
+    blast_res_processed_in <- blast_res_full %>%
+      dplyr::mutate(is_bad_1 = stringr::str_detect(`1_subject header`, bad_res_ids),
+                    is_bad_2 = stringr::str_detect(`2_subject header`, bad_res_ids),
+                    is_bad_3 = stringr::str_detect(`3_subject header`, bad_res_ids),
+                    
+                    # Select best valid hit
+                    Selected_Hit_Origin = 
+                      dplyr::case_when(!is_bad_1 ~ "1", is_bad_1 & !is.na(`2_subject header`)
                        & !is_bad_2 ~ "2", is_bad_1 & is_bad_2 
                        & !is.na(`3_subject header`) & !is_bad_3 ~ "3",
                        TRUE ~ "None"),
-
-    # Assign Final ID and TaxID based on selection
-    `blast ID` = dplyr::case_when(Selected_Hit_Origin == "1" ~
-                                    substr(`1_subject header`, 1, 40),
-                       Selected_Hit_Origin == "2" ~
-                         substr(`2_subject header`, 1, 40),
-                       Selected_Hit_Origin == "3" ~ 
-                         substr(`3_subject header`, 1, 40),
-                       TRUE ~ "Match_not_reliable"),
-
-    query_taxID = dplyr::case_when(Selected_Hit_Origin == "1" ~ `1_staxid`,
-                                   Selected_Hit_Origin == "2" ~ `2_staxid`,
-                                   Selected_Hit_Origin == "3" ~ `3_staxid`,
-                                   TRUE ~ NA_character_)) %>%
+                    
+                    # Assign Final ID and TaxID based on selection
+                    `blast ID` = dplyr::case_when(Selected_Hit_Origin == "1" ~ substr(`1_subject header`, 1, 40),
+                                                  Selected_Hit_Origin == "2" ~ substr(`2_subject header`, 1, 40),
+                                                  Selected_Hit_Origin == "3" ~ substr(`3_subject header`, 1, 40),
+                                                  TRUE ~ "Match_not_reliable"),
+                    query_taxID = dplyr::case_when(Selected_Hit_Origin == "1" ~ `1_staxid`,
+                                                   Selected_Hit_Origin == "2" ~ `2_staxid`,
+                                                   Selected_Hit_Origin == "3" ~ `3_staxid`,
+                                                   TRUE ~ NA_character_)) %>%
       # Second pass clean-up for any lingering "Uncultured" that slipped through
-      dplyr::mutate(`blast ID` = dplyr::if_else(
-        stringr::str_detect(`blast ID`, "ncultur|nvironmental"),
-        "Match_not_reliable",
-        `blast ID`))
+      dplyr::mutate(`blast ID` = dplyr::if_else(stringr::str_detect(`blast ID`, "ncultur|nvironmental"),
+                                                "Match_not_reliable", `blast ID`))
 
     # Check results
     table(blast_res_processed$Selected_Hit_Origin)
@@ -2882,33 +2885,37 @@ Raw database headers often contain structural artifacts, strain identifiers, or 
 -   **Standardize nomenclature.** Clean up species names by removing artifacts, tags (e.g., "cf.", "aff."), and reducing names to Binomial format (Genus species).
 
     ```{r}
+    # Verify blast IDs column to ensure what remove 
+    blast_res_processed_in %>% select(`blast ID`) %>% unique() %>% pull() %>% sort()
+
     # Clean strings
-    blast_res_processed <- blast_res_processed %>%
-      dplyr::mutate(`blast ID` = `blast ID` %>%
-    # 1. Remove textual noise, punctuation, and line breaks from NCBI
-        stringr::str_replace_all(
-          c("Uncultured" = "", "uncultured" = "", "Candidatus" = "", 
-          "MAG:" = "", "MAG TPA_asm:" = "", "TPA_asm:" = "", 
-          "^Cf. " = "", "candidate division" = "", 
-          "\\[" = "", "\\]" = "", "'" = "", "," = "", "\\n" = "")
-          ) %>%
-    # 2. Remove intermediate tags common in uncertain taxonomy
-        stringr::str_replace_all(c(" cf. " = " ", " nr. " = " ")) %>%
-    # 3. Cleans extra spaces (leading, trailing, and double spaces in between)
+    blast_res_processed <- blast_res_processed_in %>%
+      dplyr::mutate(`blast ID` = dplyr::case_when(`blast ID` == "Match_not_reliable" ~ "Match_not_reliable", 
+                                                  TRUE ~ `blast ID` %>%
+      # Remove textual noise, punctuation, and line breaks from NCBI
+      stringr::str_replace_all(c(
+        "Uncultured" = "", "uncultured" = "", "Candidatus" = "",
+        "MAG:" = "", "MAG TPA_asm:" = "", "TPA_asm:" = "",
+        "^Cf. " = "", "^cf. " = "","candidate division" = "",
+        "\\[" = "", "\\]" = "", "'" = "", "," = "", "\\n" = ""
+        )) %>%
+      # Remove intermediate tags common in uncertain taxonomy
+      stringr::str_replace_all(c(
+        " cf. " = " ", " nr. " = " "
+        )) %>%
+      # Cleans extra spaces (leading, trailing, and double spaces in between)
       stringr::str_squish() %>%
-      # 4. Extracts Genus and Species
-      stringr::word(1, 2, sep = stringr::fixed(" "))) %>%
-      # 5. Forces confusing identifications into the desired standard
-      dplyr::mutate(
-    `blast ID` = dplyr::recode(`blast ID`,
-      "Human DNA" = "Homo sapiens",
-      "Human chromosome" = "Homo sapiens",
-      "Eukaryotic synthetic" = "Homo sapiens"
-    )
-      )
+      # Extracts Genus and Species
+      stringr::word(1, 2, sep = stringr::fixed(" ")))) %>%
+      # Forces confusing identifications into the desired standard
+      dplyr::mutate(`blast ID` = dplyr::recode(`blast ID`,
+                                               "Human DNA" = "Homo sapiens",
+                                               "Human chromosome" = "Homo sapiens",
+                                               "Eukaryotic synthetic" = "Homo sapiens"
+                                               ))
 
     # Verify cleaned names
-    head(unique(blast_res_processed$`blast ID`))
+    blast_res_processed %>% select(`blast ID`) %>% unique() %>% pull() %>%  sort()
     ```
 
 ### Retrieve Complete Lineages
@@ -2918,60 +2925,50 @@ With reliable TaxIDs established, the pipeline queries NCBI to download the full
 -   **Fetch complete taxonomy.** Query NCBI in parallel using `BLASTr::parallel_get_tax` to retrieve full lineage information based on the curated TaxIDs.
 
     ```{r}
-    # Identify unique TaxIDs to query
-    # taxids_to_search <- unique(na.omit(blast_res_processed$query_taxID))
-
-    # Execute parallel taxonomy retrieval
-    # taxonomy_tbl <- 
-    #   BLASTr::parallel_get_tax(organisms_taxIDs = taxids_to_search,
-    #                            retry_times = 5,
-    #                            verbose = "full") %>%
-    #   BiocGenerics::unique()
-
     # Retrieve complete taxonomy custom function
-    source("/home/gabriel/functions/retrieve_taxonomy.R")
+    source("/home/gabriel/functions/retrieve_taxonomy_v2.R")
 
     taxids_to_search <- blast_res_processed %>% 
-      dplyr::mutate(genus = stringr::word(`1_subject header`)) %>% 
-      dplyr::select(genus,
-                    query_taxID) %>% 
+      dplyr::mutate(genus = stringr::word(`blast ID`)) %>% 
+      dplyr::select(genus, query_taxID) %>% 
       dplyr::rename(uid = query_taxID) %>% 
-      unique()
+      dplyr::distinct()
 
     # Identify unique TaxIDs to query
-    taxonomy_tbl_full <- 
-      retrieve_taxonomy(taxids_to_search) %>%
-      BiocGenerics::unique()
-      
-    # Select only the informative columns
-    taxonomy_tbl <- 
-      taxonomy_tbl_full %>% 
-      dplyr::select(-c(`cellular root`, clade, domain, tribe, `no rank`, subtribe,
-                       forma, subspecies, subgenus, section, varietas, genotype, `NA`)) %>%
-      dplyr::rename(Sci_name = species,
-                    query_taxID = uid,
-                    `Superkingdom (NCBI)` = subkingdom, 
-                    `Kingdom (NCBI)` = kingdom, 
-                    `Phylum (NCBI)` = phylum, 
-                    `Subphylum (NCBI)` = subphylum, 
-                    `Class (NCBI)` = class, 
-                    `Subclass (NCBI)` = subclass, 
-                    `Order (NCBI)` = order, 
-                    `Suborder (NCBI)` = suborder, 
-                    `Family (NCBI)` = family, 
-                    `Subfamily (NCBI)` = subfamily, 
-                    `Genus (NCBI)` = `genus_rank`) %>% 
-      dplyr::relocate(Sci_name, 
-                      `Genus (NCBI)`)
+    taxonomy_tbl_full <- retrieve_taxonomy(taxids_to_search) %>% 
+      dplyr::distinct()
 
-    # Check if the automatic Species name (Sci_name) and Genus (`Genus (NCBI)`) colunms are identical
+    # Select only the informative columns
+    taxonomy_tbl <- taxonomy_tbl_full %>% 
+      dplyr::select(-dplyr::any_of(c("cellular root", "clade", "domain", "tribe", "no rank", 
+                    "subtribe", "forma", "subspecies", "subgenus", "section", 
+                    "varietas", "genotype", "NA"))) %>% 
+      dplyr::rename(Sci_name = dplyr::any_of("species"),
+                    query_taxID = uid,
+                    `Superkingdom (NCBI)` = dplyr::any_of("subkingdom"),
+                    `Kingdom (NCBI)` = dplyr::any_of("kingdom"),
+                    `Phylum (NCBI)` = dplyr::any_of("phylum"),
+                    `Subphylum (NCBI)` = dplyr::any_of("subphylum"),
+                    `Class (NCBI)` = dplyr::any_of("class"),
+                    `Subclass (NCBI)` = dplyr::any_of("subclass"),
+                    `Order (NCBI)` = dplyr::any_of("order"),
+                    `Suborder (NCBI)` = dplyr::any_of("suborder"),
+                    `Family (NCBI)` = dplyr::any_of("family"),
+                    `Subfamily (NCBI)` = dplyr::any_of("subfamily"),
+                    `Genus (NCBI)` = dplyr::any_of("genus_rank")) %>% 
+      dplyr::relocate(dplyr::any_of(c("Sci_name", "Genus (NCBI)")))
+
+    # Check if the automatic Species name (Sci_name) and Genus (`Genus (NCBI)`) columns are identical
     sci_name_genus_df <- taxonomy_tbl %>%
       dplyr::filter(is.na(Sci_name) | stringr::word(Sci_name, 1) != `Genus (NCBI)`)
 
     # Check for missing IDs (failed queries)
-    missing_taxids <- setdiff(taxids_to_search, taxonomy_tbl$query_taxID)
-    if (length(missing_taxids) > 0) {
-      message(paste(length(missing_taxids), "TaxIDs could not be retrieved."))
+    missing_taxids <- taxids_to_search %>% 
+      dplyr::filter(!uid %in% taxonomy_tbl$query_taxID)
+
+    if (nrow(missing_taxids) > 0) {
+      warning(paste(nrow(missing_taxids), " TaxIDs were not retrieved."))
+      print(missing_taxids)
     }
 
     # Show Complete Taxonomy Table
@@ -2986,20 +2983,16 @@ Biological databases occasionally lack designations for certain intermediate ran
 
     ```{r}
     taxonomy_tbl_filled <- taxonomy_tbl %>%
-      
       # Fill missing Genus entries by extracting the first word from the Sci_name
       dplyr::mutate(`Genus (NCBI)` = dplyr::case_when(
         is.na(`Genus (NCBI)`) & !is.na(Sci_name) ~ stringr::word(Sci_name, 1),
         TRUE ~ `Genus (NCBI)`),
-         
         # Manually assign missing Superkingdoms based on specific Kingdoms and Phyla
         `Superkingdom (NCBI)` = dplyr::case_when(
           !is.na(`Superkingdom (NCBI)`) ~ `Superkingdom (NCBI)`,
-          
           # Assign Archaea
           `Kingdom (NCBI)` %in% c("Promethearchaeati", "Nanobdellati",
                                   "Methanobacteriati", "Thermoproteati") ~ "Archaea",
-          
           # Assign Eukaryota
           `Kingdom (NCBI)` %in% c("Viridiplantae", "Metazoa", "Fungi") ~ "Eukaryota",
           `Phylum (NCBI)` %in% c("Ciliophora", "Euglenozoa", "Oomycota",
@@ -3010,7 +3003,6 @@ Biological databases occasionally lack designations for certain intermediate ran
                                  "Heterolobosea", "Nibbleridia","Parabasalia",
                                  "Perkinsozoa", "Foraminifera", "Telonemia", 
                                  "Nebulidia", "Evosea") ~ "Eukaryota",
-          
           # Assign Bacteria
           `Kingdom (NCBI)` %in% c("Pseudomonadati", "Bacillati", "Fusobacteriati",
                                   "Thermotogati") ~ "Bacteria",
@@ -3040,10 +3032,12 @@ Biological databases occasionally lack designations for certain intermediate ran
     # Transform empty strings and literal "NA" values to true R NA before filling
     taxonomy_tbl_filled <- taxonomy_tbl_filled %>%
       dplyr::mutate(dplyr::across(dplyr::all_of(tax_ranks),
-                                  ~ dplyr::na_if(., "") %>% dplyr::na_if("NA")))
+                                  ~ dplyr::na_if(., "") %>% 
+                                    dplyr::na_if("NA")))
 
     # Sequentially fill missing ranks based on the highest available adjacent rank
     for (i in 2:length(tax_ranks)) {
+      
       current_rank <- tax_ranks[i]
       higher_rank <- tax_ranks[i - 1]
       
@@ -3051,19 +3045,15 @@ Biological databases occasionally lack designations for certain intermediate ran
       rank_prefix <- stringr::str_to_lower(stringr::word(current_rank, 1))
       
       taxonomy_tbl_filled <- taxonomy_tbl_filled %>%
-        dplyr::mutate(!!rlang::sym(current_rank) := 
-                        dplyr::coalesce(!!rlang::sym(current_rank),
-                                        paste0(rank_prefix, " of ", 
-                                               !!rlang::sym(higher_rank))
-      )
-    )
+        dplyr::mutate(!!rlang::sym(current_rank) := dplyr::coalesce(!!rlang::sym(current_rank),
+                                                                    paste0(rank_prefix, " of ",
+                                                                           !!rlang::sym(higher_rank))))
     }
-
+    
     # Fix the edge case where Superkingdom might be NA but Kingdom is not
     taxonomy_tbl_filled <- taxonomy_tbl_filled %>%
       dplyr::mutate(`Superkingdom (NCBI)` = dplyr::coalesce(`Superkingdom (NCBI)`,
-                                                            paste0("superkingdom of ",
-                                                                   `Kingdom (NCBI)`)))
+                                                            paste0("superkingdom of ", `Kingdom (NCBI)`)))
 
     # Show Complete Taxonomy Table
     View(taxonomy_tbl_filled)
@@ -3076,12 +3066,18 @@ Once the taxonomic lineages are fully resolved and curated, they must be merged 
 -   **Combine tax and BLAST hits.** Merge the curated sequence identifications with their fully resolved taxonomic lineages into a single reference table. This table is saved locally as an `.rds` object to serve as a persistent taxonomic database, preventing the need to re-query NCBI APIs if downstream steps fail.
 
     ```{r}
-    # 1. Join taxonomy back to the processed BLAST results
+    # Join taxonomy back to the processed BLAST results
     blast_res_tax <- blast_res_processed %>%
       dplyr::left_join(taxonomy_tbl_filled, 
                        by = "query_taxID") %>% 
       dplyr::select(-c(dplyr::starts_with("is_bad_"),
                        `Sci_name`)) %>% 
+      # Replace BLAST IDs with NCBI Genus when pattern matches species abbreviation
+      dplyr::mutate(`blast ID` = dplyr::if_else(stringr::str_detect(`blast ID`, 
+                                                    "^[A-Za-z]\\.[^ ]+ [^ ]+$"),
+                                         stringr::str_c(`Genus (NCBI)`,
+                                                        stringr::str_extract(`blast ID`, "(?<=\\.)[^ ]+"), 
+                                                        sep = " "), `blast ID`)) %>% 
       dplyr::relocate(`Superkingdom (NCBI)`,
                       `Kingdom (NCBI)`,
                       `Phylum (NCBI)`,
@@ -3094,21 +3090,19 @@ Once the taxonomic lineages are fully resolved and curated, they must be merged 
                       `Subfamily (NCBI)`,
                       `Genus (NCBI)`,
                       `blast ID`)
-      
-    # 2. Save a backup of the completed taxonomic assignment
-    # Creating a dedicated RDS ensures we don't lose the API results
-    saveRDS(object = blast_res_tax,
-            file = file.path(blast_path, paste0("blast_res_tax_", Sys.Date(), ".rds")))
-
-    # Optional: Reload if needed
-    # blast_res_tax <- readRDS(file.path(blastpath, paste0("blast_res_tax_", Sys.Date(), ".rds")))
+    
+    # Assess whether the blast IDs are correct
+    blast_res_tax %>% select(`blast ID`) %>% unique() %>% pull() %>% sort()
+    
+    # Show Complete Taxonomy and Abundance Table
+    View(blast_res_tax)
     ```
 
 -   **Join taxonomy to sequence abundance.** Integrate the complete taxonomic reference table back into the core Phyloseq-derived dataframe (`all_ps_tbl`). This finalizes the dataset by linking every sequence variant to its respective sample metadata, read abundance, and biological identity.
 
     ```{r}
     # Link taxonomy to abundance results and filter out zeros
-    all_ps_tbl_final <- all_ps_tbl %>%
+    all_ps_tbl_full <- all_ps_tbl %>%
       dplyr::left_join(blast_res_tax %>%
                          dplyr::select(`ASV (Sequence)`, 
                                        `blast ID`,
@@ -3118,10 +3112,14 @@ Once the taxonomic lineages are fully resolved and curated, they must be merged 
       dplyr::filter(Abundance > 0)
       
     # Verify the final column structure
-    colnames(all_ps_tbl_final)
+    colnames(all_ps_tbl_full)
 
-    # Show Complete Results Table
-    View(all_ps_tbl_final)
+    # Evaluate the taxonomy metadata 
+    all_ps_tbl_full %>%
+      relocate(`ASV (Sequence)`,
+              `blast ID`,
+              ends_with("(NCBI)")) %>%
+      View()
     ```
 
 ### Save the Environment!
@@ -3250,6 +3248,30 @@ While BLASTn against local nucleotide databases covers most markers, CO1 barcode
 Although DADA2 produces exact sequence variants (ASVs), biological reality often involves intra-species variation or sequencing error thresholds that warrant clustering into Operational Taxonomic Units (OTUs). SWARM implements a local clustering algorithm that groups ASVs differing by exactly 1 nucleotide, producing a more conservative, ecologically meaningful partition of the data.
 
 ### Prepare input FASTA file
+
+-   **Retrieve ASV sequences.** Create a tibble with unique ASV sequences and its correspondent headers.
+
+    ```{r}
+    # Retrieve ASVs unique sequences and their matching headers
+    all_asv_seqs <- dplyr::tibble("ASV (Sequence)" = unique(all_ps_tbl_full$`ASV (Sequence)`)) %>%
+      dplyr::mutate("ASV Size (bp)" = nchar(`ASV (Sequence)`)) %>%
+      dplyr::arrange(dplyr::desc(`ASV Size (bp)`)) %>%
+      dplyr::mutate("ASV header" = paste0(sprintf(paste0(">ASV_%0", all_asv_seqs %>%  nrow() %>% nchar(),
+                                                         "d"), row_number(.)),"-",.$`ASV Size (bp)`, "bp")) 
+    
+    # Link ASV new metadata to results tbl 
+    all_ps_tbl_final <- all_ps_tbl_full %>% 
+      dplyr::left_join(all_asv_seqs,
+                       by = c("ASV (Sequence)",
+                              "ASV Size (bp)"))
+
+    # Evaluate the new table metadata
+    all_ps_tbl_final %>% 
+      relocate(`ASV (Sequence)`,
+              `ASV header`,
+              `ASV Size (bp)`) %>% 
+      View()
+    ```
 
 -   **Prepare ASV FASTA with headers.** Create a FASTA file of all non-zero ASVs with standardized headers (ASV001_150bp) containing size and total abundance information for traceability.
 
