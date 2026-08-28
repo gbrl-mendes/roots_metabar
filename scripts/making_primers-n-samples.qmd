@@ -35,6 +35,7 @@ chunk_output_type: console
     ```
 
 ### Directory Management
+
 -   **Create directory structure.** Define project paths and create the directory structure required by the pipeline.
 
     ```{r}
@@ -79,7 +80,7 @@ chunk_output_type: console
     # Files in the project folder
     list.files(prjct_path)
     ```
-    
+
 ### Raw data aquisition
 
 -   **Upload raw metadata sheets**
@@ -90,25 +91,25 @@ chunk_output_type: console
       read_csv(paste0(data_path, "/", "raw/",
                       "infos_carol_its.csv")) %>%
       tibble()
-    
+
     # RbcL Sequencing Metadata from Metagen
     RbcL_sequecing_data_tbl <- 
       read_csv(paste0(data_path, "/", "raw/",
                       "infos_carol_rbcl.csv"))%>%
       tibble()
-    
+
     # Sample Metadata 
     smpl_metadata_tbl <- 
       read_csv(paste0(data_path,"/", "raw/",
                       "soil_complete_2026.csv")) %>%
       tibble()
-    
+
     # Soil Core Metadata 
     soil_metadata_tbl <- 
       read_csv(paste0(data_path,"/", "raw/",
                       "soilcoredata_flynn_2026.csv")) %>%
       tibble()
-    
+
     # Associated Core Species Data
     species_per_core_tbl <- 
       read_excel(paste0(data_path,"/", "raw/",
@@ -140,7 +141,7 @@ chunk_output_type: console
                                  TRUE ~ replica),
              obs = paste(forward_tag_name, reverse_tag_name, sep = "_")) %>%
       relocate(Lab_ID, pool, sample, replica, obs)
-    
+
     # Merging Sample and Soil Core Metadata table
     sample_metadata_tbl <-
     smpl_metadata_tbl %>% 
@@ -148,7 +149,7 @@ chunk_output_type: console
       select(-c(Core_ID, Depth_m)) %>%
       left_join(soil_metadata_tbl, by = "Lab_ID") %>% 
       relocate(Lab_ID)
-    
+
     # Formatting Associated Core Species data table
     species_per_core_tbl_rdx <-
       species_per_core_tbl %>%
@@ -240,9 +241,9 @@ chunk_output_type: console
                `Primer sequence FWD`, `Full sequence FWD`, `Index name REV`, `Index sequence REV`, 
                `Primer sequence REV`, `Full sequence REV`, `Multiplexed data path`,
                `Demultiplexed data path`)
-    
+
     # Saving
     write.csv(primers_n_samples,
-      file = paste0(data_path, paste0("/roots_metabar-primers_n_samples-", Sys.Date(), ".csv")),
+      file = paste0(data_path, paste0("/primers_n_samples-", Sys.Date(), ".csv")),
       row.names = FALSE)
     ```
