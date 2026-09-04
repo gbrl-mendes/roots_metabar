@@ -1,0 +1,260 @@
+---
+title: "Carol Flynn's PhD Roots Metabarcoding: Creating DNA reference database"
+author: "Carol Flynn", "Gabriel A. Mendes"
+format: html
+editor: visual
+editor_options:
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+# Creating DNA reference database
+
+## 1. Setup & Configuration
+
+### Packages
+
+-   **Load libraries.** Import all necessary packages for data manipulation, demultiplex, ASVs inference, taxonomy assigment and data visualization.
+
+    ```{r}
+    library(tidyverse)
+    library(phyloseq)
+    library(Biostrings)
+    library(DECIPHER)
+    library(writexl)
+    library(readxl)
+    library(BLASTr)
+    library(phangorn)
+    library(msa)
+    library(ggtree)
+    ```
+
+### Directory Management
+
+-   **Create directory structure.** Define project paths and create the directory structure required by the pipeline.
+
+    ```{r}
+    # Project folder path  
+    prjct_path <- "/home/gabriel/projetos/roots_metabar"
+
+    # Derived paths
+    {
+      env_path <- file.path(prjct_path, "environments")
+      data_path <- file.path(prjct_path, "data")
+      results_path <- file.path(prjct_path, "results")
+      figs_path <- file.path(prjct_path, "figures")
+      blast_path <- file.path(results_path, "blast")
+      DB_path <- file.path(data_path, "reference_database/")
+    }
+
+    # Paths to be created
+    paths <- c(prjct_path, env_path, data_path, results_path,
+               figs_path, blast_path, DB_path)
+
+    for (dir in paths) {
+      if (dir.exists(dir)) {
+    print(paste("The folder", dir, "already exists!"))
+      } else {
+    print(paste("Creating", dir, "!" ))
+    dir.create(dir) 
+      }
+    }
+
+    # Files in the project folder
+    list.files(prjct_path)
+    ```
+
+-   **Load custom functions.**
+
+    ```{r}
+    # Retrieve taxID custom function
+    source("/home/gabriel/functions/retrieve_taxid.R")
+
+    # Retrieve complete taxonomy custom function
+    source("/home/gabriel/functions/retrieve_taxonomy.R")
+    ```
+
+### Raw data aquisition
+
+-   **Upload raw metadata sheets**
+
+    ```{r}
+    # Metagen's samples output record
+    metagen_output <-  
+      read_csv(paste0(data_path, "/", "barcode/",
+                      "samples_metagen-output.csv"))%>%
+      tibble()
+
+    # Tanguro's sampling metadata 
+    tanguro_leaf_metadata <- 
+      read_csv(paste0(data_path,"/", "barcode/",
+                      "leaf_sampling_tanguro_metadata.csv")) %>%
+      tibble() %>% 
+      select(-c(Tag, Sampling_date)) %>% 
+      unique()
+    ```
+
+## 2. Raw data processing
+
+-   **Format tables.** Merge tissue reference metadata with the sample sequences
+
+    ```{r}
+    # Associate Sanger reference sequences to correspondent metadata 
+    database_output <- metagen_output %>% 
+      left_join(tanguro_leaf_metadata, by = c("Popular_name")) %>% 
+      select(-c(Family)) %>% 
+      group_by(Popular_name) %>%
+      fill(-Popular_name, .direction = "downup") %>%
+      ungroup() %>% 
+      mutate(`Species_clean` = sub(" .*", "", Species),
+             Species_full = paste(Genus, Species_clean),
+             barcode_tag = paste0(barcode_tag, "-", primer),
+             Header = paste0(barcode_tag, " ", Genus, 
+                             " ", Species_clean)) %>% 
+      relocate(Header, Species_full) %>% 
+      unique()
+    ```
+
+-   **Retrieve full taxonomy.**
+
+    ```{r}
+    # Retrive taxIDs
+    sequence_taxids <- retrieve_taxid(unique(database_output$Genus),
+                                      ask = TRUE)
+
+    # Retrieve complete taxonomy
+    curated_taxonomy <- retrieve_taxonomy(sequence_taxids) %>%
+      select(kingdom, phylum, class, order, family, genus, uid) %>%
+      rename_with(stringr::str_to_title)
+
+    # Join with reference and metadata
+    database_output_full <- database_output %>% 
+      left_join(curated_taxonomy, by = c("Genus")) %>% 
+      relocate(Kingdom,
+               Phylum,
+               Class,
+               Order,
+               Family,
+               Genus,
+               Species_full,
+               Species)
+    ```
+
+-   **Export full output table.**
+
+    ```{r}
+    writexl::write_xlsx(database_output_full,
+                        path = file.path(results_path, 
+                                         paste0("tanguro_DB", Sys.Date(), ".xlsx")))
+    ```
+
+## 3. Create DNA reference fasta
+
+-   **Create DNAStringSet object.**
+
+    ```{r}
+    # Retrieve reference sequencers
+    tanguro_DB <- DNAStringSet(database_output$Sequence)
+    BrowseSeqs(tanguro_DB)
+
+    # Retrieve sequence's headers
+    names(tanguro_DB) <- database_output$Header
+
+    # Reorder based on names
+    tanguro_DB <- tanguro_DB[order(names(tanguro_DB))]
+
+    # Visualize DB
+    BrowseSeqs(tanguro_DB)
+    ```
+
+-   **Edit DNAStringSet object.**
+
+    ```{r}
+    # Remove gaps
+    tanguro_DB_nogaps <- RemoveGaps(tanguro_DB)
+    BrowseSeqs(tanguro_DB_nogaps)
+
+    # Orient nucleotides
+    tanguro_DB_nogaps <- OrientNucleotides(tanguro_DB_nogaps)
+    BrowseSeqs(tanguro_DB_nogaps)
+
+    # Align sequences (didatic porpuses)
+    tanguro_DB_aligned <- tanguro_DB_nogaps %>% AlignSeqs(refinements = 700,
+                                                          iterations = 700,
+                                                          verbose = TRUE)
+    BrowseSeqs(tanguro_DB_aligned)
+    ```
+
+-   **Save DNA reference database fasta file.**
+
+    ```{r}
+    DB_file <- paste0(DB_path, "tanguro_DB_noGaps_", Sys.Date(), ".fasta")
+
+    Biostrings::writeXStringSet(tanguro_DB_nogaps,
+                                filepath = DB_file)
+    ```
+
+## 4. Create and plot DNA reference tree
+
+-   **Create Neighbor-Joining Tree.**
+
+    ```{r}
+    # Align with ClustalW
+    tanguro_DB_aligned <- msa(inputSeqs = tanguro_DB_nogaps,
+                              method = "ClustalW",
+                              substitutionMatrix = "clustalw",
+                              type = "dna",
+                              order = "input")
+
+    # Convert alignment to phyDat
+    phy_data <- as.phyDat(tanguro_DB_aligned, type = "DNA")
+
+    #Calculate distance
+    dist_phy <- dist.ml(phy_data, model = "JC69")
+
+    # Create NJ tree
+    tanguro_tree_nj <- NJ(dist_phy)
+    ```
+
+-   **Plot Neighbor-Joining Tree.**
+
+    ```{r}
+    tanguro_tree_plot <- ggtree(tanguro_tree_nj, ladderize = TRUE) %<+%
+      database_output_tbl + 
+      geom_tiplab(aes(label = Species_full, color = Family), offset = 0.01) +
+      geom_treescale() +
+      theme_tree2() +
+      labs(title = "Tanguro's DNA Reference Database Tree")
+
+    plot(tanguro_tree_plot)
+
+    # Save tree plot
+    ggsave(file = paste0(figs_path, "/", 
+                                    PRJ, 
+                                    "-primers_found_in_reads.pdf"),
+           plot = primers_tile,
+           device = "pdf",
+           # width = ,
+           # height = ,
+           units = "cm",
+           dpi = 600)
+    ```
+
+## 5.Create BLAST reference
+
+-   **Execute on Bash**
+
+    ```{R}
+    # Confirm FASTA header format
+    system2("head", DB_file)
+
+    # Execute BLAST makeblastdb
+    cmd <- "makeblastdb"
+    args <- c("-in", DB_file,
+              "-dbtype", "nucl",
+              "-parse_seqids",
+              "-blastdb_version", "5",
+              "-hash_index")
+
+    system2(cmd, args = args)
+    ```
