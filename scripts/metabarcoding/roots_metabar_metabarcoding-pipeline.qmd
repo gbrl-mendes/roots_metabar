@@ -989,7 +989,7 @@ All other orientation/read combinations should be near zero. *Typical examples:*
 **Case 2 — Standard library, amplicon shorter than the read length (read-through occurs).** When the amplicon is shorter than the read length, R1 reads through the entire insert and into the REV primer site, encountering it from the antisense direction — it therefore appears as `RevComp` at the 3' end of R1. Symmetrically, R2 reads through and encounters the FWD primer site as `RevComp` at its 3' end. The expected result is:
 
 | Primer  | R1                                       | R2                                       |
-|:----------------|:--------------------------|:--------------------------|
+|:--------------|:----------------------------|:----------------------------|
 | **FWD** | **Forward** (good, 5' start of R1)       | **RevComp** (read-through, 3' end of R2) |
 | **REV** | **RevComp** (read-through, 3' end of R1) | **Forward** (good, 5' start of R2)       |
 
@@ -3483,7 +3483,7 @@ This step identifies ASVs present in negative controls (PCR, Extraction, Filtrat
 
 This metric quantifies signal strength against background noise, allowing the pipeline to distinguish true biological signals from contamination.
 
-```{{r}}
+```{r}
 # Sample must be >= 10x the associated control to count as "True detection"
 fc_threshold <- 10
 
@@ -3916,19 +3916,21 @@ Refines BLAST hits into final ecological identifications with confidence scores,
       )
     ```
 
-```{r}
-asvs_sample_complete %>% filter(`Read origin` == "merged",
-                                `Identification Max. taxonomy` == "Species",
-                                `Contamination status` == "True detection",
-                                `Primer expected length` == "in range",
-                                Type == "sample",
-                                `Possible Plant` = TRUE) %>% 
-  select(Identification) %>% 
-  unique() %>% 
-  pull()
-```
+-   **Pulling Species**  
 
--   **ASV × samples table.** One row per ASV, one column per sample (`SAMPLE <name>`), values = clean relative abundance only (contamination is already excluded, since it was zeroed upstream). This must be built per project — the set of sample columns is necessarily different for each project — so this chunk defines a reusable function; it is executed per project in the export loop below.
+    ```{r}
+    asvs_sample_complete %>% filter(`Read origin` == "merged",
+                                    `Identification Max. taxonomy` == "Species",
+                                    `Contamination status` == "True detection",
+                                    `Primer expected length` == "in range",
+                                    Type == "sample",
+                                    `Possible Plant` = TRUE) %>% 
+      select(Identification) %>% 
+      unique() %>% 
+      pull()
+    ```
+
+-   **ASVs × samples table.** One row per ASV, one column per sample (`SAMPLE <name>`), values = clean relative abundance only (contamination is already excluded, since it was zeroed upstream). This must be built per project — the set of sample columns is necessarily different for each project — so this chunk defines a reusable function; it is executed per project in the export loop below.
 
     ```{r}
     eco_tables_by_project <- list()
