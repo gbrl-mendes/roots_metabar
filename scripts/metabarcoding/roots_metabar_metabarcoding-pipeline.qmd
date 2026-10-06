@@ -2841,9 +2841,9 @@ A single ASV query can return multiple alignments, some of which may point to un
 
     ```{r}
     # Verify subject header columns to ensure what can be considered a bad hit 
-    blast_res_processed %>% select(`1_subject header`,
-                                   `2_subject header`,
-                                   `3_subject header`) %>% unique() %>% pull() %>% sort()
+    blast_res_full %>% select(`1_subject header`,
+                              `2_subject header`,
+                              `3_subject header`) %>% unique() %>% pull() %>% sort()
 
     # Define patterns for non-informative hits
     bad_res_ids <- paste0(c("Uncultured", 

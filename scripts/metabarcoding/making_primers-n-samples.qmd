@@ -115,6 +115,13 @@ chunk_output_type: console
       read_excel(paste0(data_path,"/", "raw/",
                         "species_per_core_20m.xlsx")) %>%
       tibble()
+    
+    write.csv(species_per_core_tbl,
+      file = paste0(data_path, paste0("/", "raw/","
+                                      species_per_core_tbl-", Sys.Date(), ".csv")),
+      row.names = FALSE)
+```
+
     ```
 
 ## 2. Raw Data Pre-processing
