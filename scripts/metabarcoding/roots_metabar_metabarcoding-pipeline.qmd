@@ -1,11 +1,13 @@
 ---
 title: "Carol Flynn's PhD Roots Metabarcoding Analyses"
-author: "Carol Flynn", "Gabriel A. Mendes", "Heron OH"
+author:
+  - "Carol Flynn"
+  - "Gabriel A. Mendes"
+  - "Heron OH"
 format: html
 editor: visual
 editor_options:
   chunk_output_type: console
-chunk_output_type: console
 ---
 
 # Tanguro Roots Metabarcoding Pipeline
@@ -989,7 +991,7 @@ All other orientation/read combinations should be near zero. *Typical examples:*
 **Case 2 — Standard library, amplicon shorter than the read length (read-through occurs).** When the amplicon is shorter than the read length, R1 reads through the entire insert and into the REV primer site, encountering it from the antisense direction — it therefore appears as `RevComp` at the 3' end of R1. Symmetrically, R2 reads through and encounters the FWD primer site as `RevComp` at its 3' end. The expected result is:
 
 | Primer  | R1                                       | R2                                       |
-|:--------------|:----------------------------|:----------------------------|
+|:----------------|:--------------------------|:--------------------------|
 | **FWD** | **Forward** (good, 5' start of R1)       | **RevComp** (read-through, 3' end of R2) |
 | **REV** | **RevComp** (read-through, 3' end of R1) | **Forward** (good, 5' start of R2)       |
 
@@ -2887,7 +2889,7 @@ A single ASV query can return multiple alignments, some of which may point to un
                                                 "Match_not_reliable", `blast ID`))
 
     # Check results
-    table(blast_res_processed$Selected_Hit_Origin)
+    table(blast_res_processed_in$Selected_Hit_Origin)
     ```
 
 ### Clean Species Names
@@ -3243,7 +3245,7 @@ While BLASTn against local nucleotide databases covers most markers, CO1 barcode
 
     # Save BOLD results for reproducibility
     saveRDS(object = BOLD_ids,
-            file = file.path(blastpath, 
+            file = file.path(blast_path, 
                              paste0("BOLD_ids_", Sys.Date(), ".rds")))
     ```
 
@@ -3268,7 +3270,7 @@ Although DADA2 produces exact sequence variants (ASVs), biological reality often
     all_asv_seqs <- dplyr::tibble("ASV (Sequence)" = unique(all_ps_tbl_blast$`ASV (Sequence)`)) %>%
       dplyr::mutate("ASV Size (bp)" = nchar(`ASV (Sequence)`)) %>%
       dplyr::arrange(dplyr::desc(`ASV Size (bp)`)) %>%
-      dplyr::mutate("ASV header" = paste0(sprintf(paste0(">ASV_%0", all_asv_seqs %>%  nrow() %>% nchar(),
+      dplyr::mutate("ASV header" = paste0(sprintf(paste0(">ASV_%0", dplyr::n() %>% nchar(),
                                                          "d"), row_number(.)),"-",.$`ASV Size (bp)`, "bp")) 
 
     # Link ASV new metadata to results tbl 
@@ -3447,10 +3449,16 @@ This step identifies ASVs present in negative controls (PCR, Extraction, Filtrat
                     "Filtration Control", "Negative control", "Negative Control",
                     "Positive control", "Positive Control", "Control")
 
+    # Case/whitespace-insensitive match against ctrl_types. Avoids silent misses when
+    # the Type label in the samples table differs only by capitalisation or spacing.
+    is_ctrl <- function(x) {
+      stringr::str_to_lower(stringr::str_squish(x)) %in% stringr::str_to_lower(ctrl_types)
+    }
+
     # Extract ASVs present in ANY control, per primer (Primer is needed
     # downstream to match each sample to the correct control)
     all_contam_ASVs <- all_ps_tbl_otu %>%
-      dplyr::filter(Abundance > 0, Type %in% ctrl_types) %>%
+      dplyr::filter(Abundance > 0, is_ctrl(Type)) %>%
       dplyr::group_by(Primer, Unique_File_name, `ASV (Sequence)`) %>%
       dplyr::summarise(`Max. ASV abd. in control` = max(Relative_Abundance_Sample, na.rm = TRUE),
                        `Final ID (NCBI)` = dplyr::first(`Final ID (NCBI)`),
@@ -3460,7 +3468,7 @@ This step identifies ASVs present in negative controls (PCR, Extraction, Filtrat
 
     # Number of control samples
     ctrl_number <- all_ps_tbl_otu %>%
-      dplyr::filter(Type %in% ctrl_types) %>%
+      dplyr::filter(is_ctrl(Type)) %>%
       dplyr::select(Unique_File_name) %>%
       unique() %>%
       dplyr::pull() %>%
@@ -3469,6 +3477,11 @@ This step identifies ASVs present in negative controls (PCR, Extraction, Filtrat
     message("Found ", nrow(all_contam_ASVs), " ASVs across ",
             length(unique(all_contam_ASVs$Unique_File_name)), " control samples",
             " (out of ", ctrl_number, " total control samples)")
+
+    if (ctrl_number == 0) {
+      warning("No control samples found: check the 'Type' labels in the samples table ",
+              "against `ctrl_types`.")
+    }
     ```
 
 ### Calculate Fold Changes
@@ -3479,7 +3492,7 @@ This step identifies ASVs present in negative controls (PCR, Extraction, Filtrat
 
 -   **FC = 1:** The ASV has equal abundance in both the sample and the control.
 
--   **FC \< 1:** The ASV is more abundant in the control than in the sample (e.g., an FC of $-2$ indicates the control abundance is twice that of the sample).
+-   **FC \< 0:** The ASV is more abundant in the control than in the sample (e.g., an FC of $-2$ indicates the control abundance is twice that of the sample).
 
 This metric quantifies signal strength against background noise, allowing the pipeline to distinguish true biological signals from contamination.
 
@@ -3498,7 +3511,20 @@ ctrl_cols <- intersect(c("PCR control",
                          "Filtration control"),
                        colnames(all_ps_tbl_otu))
 
-message("Control columns found in the table:", paste(ctrl_cols, collapse = ", "),    "\n")
+message("Control columns found in the table: ", paste(ctrl_cols, collapse = ", "), "\n")
+
+# Expected control columns that did NOT reach the table (e.g. commented out in the
+# `all_samdf` select of section 4): no Fold Change is computed for them
+missing_ctrl_cols <- setdiff(c("PCR control", "Extraction control", "Filtration control"),
+                             ctrl_cols)
+if (length(missing_ctrl_cols) > 0) {
+  message("Control columns NOT found (no FC will be computed for them): ",
+          paste(missing_ctrl_cols, collapse = ", "), "\n")
+}
+if (length(ctrl_cols) == 0) {
+  stop("None of the expected control columns is in the table. Check the `all_samdf` ",
+       "select (section 4) and the column names in the samples table.")
+}
 
 # Sanity check: each sample is expected to reference at most one control per     category. If a cell contains multiple controls separated by ";", that assumption no    longer holds and the join below will silently fail to match those rows.
 multi_ctrl_check <- all_ps_tbl_otu %>%
@@ -3525,7 +3551,7 @@ for (c_col in ctrl_cols) {
 
   # Match each sample to its referenced control and get max abundance
   ctrl_matched <- all_ps_tbl_control %>%
-    dplyr::filter(!Type %in% ctrl_types, !is.na(.data[[c_col]]), .data[[c_col]] !=     "") %>%
+    dplyr::filter(!is_ctrl(Type), !is.na(.data[[c_col]]), .data[[c_col]] !=     "") %>%
     dplyr::mutate(ctrl_ref = stringr::str_trim(.data[[c_col]])) %>%
     dplyr::inner_join(contam_lookup,
                       by = c("Primer", 
@@ -3546,6 +3572,16 @@ for (c_col in ctrl_cols) {
                                                                     Max_ctrl_abd),
                                                  NA_real_)) %>%
     dplyr::select(-Max_ctrl_abd)
+}
+
+# Names of the FC columns actually created (used by the plot and flag chunks below)
+fc_cols <- unname(col_names[ctrl_cols])
+
+if (all(vapply(all_ps_tbl_control[fc_cols], function(x) all(is.na(x)), logical(1)))) {
+  warning("No Fold Change could be computed (all FC values are NA). Check that: ",
+          "(1) the Type label of the controls is in `ctrl_types`; ",
+          "(2) the control columns of the samples table contain the Unique_File_name ",
+          "of the control (not the Sample name).")
 }
 ```
 
@@ -3586,7 +3622,7 @@ for (c_col in ctrl_cols) {
 
 ### Set contamination status
 
--   **Flag contamination status.** Apply logic: mark as "Possible contamination" any Fold Change ≤ threshold, otherwise "True detection".
+-   **Flag contamination status.** Apply logic: mark as "Possible contamination" any Fold Change \< threshold, otherwise "True detection".
 
     ```{r}
     # Flag contamination
@@ -3632,7 +3668,7 @@ Once contamination statuses are flagged, these artifacts must be effectively rem
 
     ```{r}
     all_ps_tbl_clean <- all_ps_tbl_control %>%
-      dplyr::filter(Type %in% "sample") %>% 
+      dplyr::filter(stringr::str_to_lower(Type) %in% "sample") %>% 
       dplyr::mutate(`Clean Abundance` = dplyr::case_when(`Contamination status` == "Possible contamination" ~ 0, 
                                                          TRUE ~ Abundance)) %>%
       dplyr::group_by(Project, 
@@ -3716,7 +3752,7 @@ Refines BLAST hits into final ecological identifications with confidence scores,
 
 -   **Categorize Metazoans.** Flag ASVs belonging to Metazoa or other target groups (Zooplankton, Phytoplankton, Benthos) based on their taxonomy. This facilitates filtering for specific ecological guilds.
 
-    ```{r, echo=TRUE, eval=FALSE}
+    ```{r, echo=TRUE}
     # 1. Define Biological Groups Lists (Expert Curation)
     # Benthos
     bentos_phy <- c("Annelida", "Arthropoda", "Mollusca")
@@ -3791,7 +3827,7 @@ Refines BLAST hits into final ecological identifications with confidence scores,
 
 -   **Categorize Terristrial Plants.** Flag ASVs belonging to Embryophyta or other target groups (Bryophytes, Pteridophytes, Gymnosperms, Angiosperms) based on their taxonomy. This facilitates filtering for specific plant lineages.
 
-    ```{r, echo=TRUE, eval=FALSE}
+    ```{r, echo=TRUE}
     # 1. Define Biological Groups Lists (Expert Curation)
     # Bryophytes (mosses, liverworts, hornworts)
     bryo_phy <- c("Bryophyta", "Marchantiophyta", "Anthocerotophyta")
@@ -3916,15 +3952,15 @@ Refines BLAST hits into final ecological identifications with confidence scores,
       )
     ```
 
--   **Pulling Species**  
+-   **Pulling Species**
 
     ```{r}
     asvs_sample_complete %>% filter(`Read origin` == "merged",
                                     `Identification Max. taxonomy` == "Species",
                                     `Contamination status` == "True detection",
                                     `Primer expected length` == "in range",
-                                    Type == "sample",
-                                    `Possible Plant` = TRUE) %>% 
+                                    stringr::str_to_lower(Type) == "sample",
+                                    `Possible Plant` == TRUE) %>% 
       select(Identification) %>% 
       unique() %>% 
       pull()
@@ -4016,7 +4052,7 @@ Refines BLAST hits into final ecological identifications with confidence scores,
 
 This diagnostic visualization displays the identification status of all ASVs across samples, post-contamination flagging. Each point represents an ASV detection, with size encoding relative abundance, color encoding BLAST pseudo-score, and shape encoding superkingdom. The interactive Plotly output enables detailed inspection of under-identified sequences and contamination flags.
 
--   **Define visualization parameters.** Set shapes for superkingdoms and prepare the BLAST pseudo-score metric matching legacy calculation.
+-   **Define visualization parameters.** Set shapes for superkingdoms and reuse the BLAST pseudo-score computed in section 11 (uncultured/environmental hits set to NA).
 
     ```{r}
     # Define shapes for superkingdoms 
@@ -4031,12 +4067,12 @@ This diagnostic visualization displays the identification status of all ASVs acr
     plot_data <- all_ps_tbl_final %>%
       dplyr::arrange(Primer) %>%
       dplyr::mutate(
-    # BLAST pseudo-score = 1*identity*1*qcovhsp*10
-    `BLASTn pseudo-score` = (`1indentity` / 100) * (`1qcovhsp` / 100) * 10 * 100,
+    # `BLASTn pseudo-score` was already computed in section 11 ((10 * identity + qcovhsp) / 11).
+    # It is reused here so the plot matches the exported tables (and the 60-100 colour scale).
 
-    # Handle uncultured/environmental 
+    # Handle uncultured/environmental hits
     `BLASTn pseudo-score` = dplyr::case_when(
-      stringr::str_detect(`1subject header`, pattern = "ncult") ~ NA_real_,
+      stringr::str_detect(`1_subject header`, pattern = "ncult") ~ NA_real_,
       TRUE ~ `BLASTn pseudo-score`)) %>%
       dplyr::arrange(dplyr::desc(`BLASTn pseudo-score`), 
                  .by_group = TRUE) %>%
@@ -4052,16 +4088,16 @@ This diagnostic visualization displays the identification status of all ASVs acr
       ggplot2::ggplot(aes(y = interaction(Sample,
                                           Unique_File_name,
                                           sep = "_"),
-                          x = `ASV Size bp`,
+                          x = `ASV Size (bp)`,
                           fill = `BLASTn pseudo-score`,
                           col = `BLASTn pseudo-score`,
                           shape = `Superkingdom (NCBI)`,
                           size = `Relative_Abundance_Sample`,
                           alpha = 0.2,
-                          group = `Final ID`,
-                          text = paste0("Final ID: ", `Final ID`, 
+                          group = `Final ID (NCBI)`,
+                          text = paste0("Final ID: ", `Final ID (NCBI)`, 
                                         "<br>", "Sample: ", Sample, "<br>",
-                                        "ASV Size bp: ", `ASV Size bp`, "<br>", 
+                                        "ASV Size bp: ", `ASV Size (bp)`, "<br>", 
                                         "BLASTn pseudo-score: ",
                                         round(`BLASTn pseudo-score`, 1), "<br>",
                                         "Superkingdom (NCBI): ",
@@ -4100,15 +4136,15 @@ This diagnostic visualization displays the identification status of all ASVs acr
       
       # Shape scale
       ggplot2::scale_shape_manual(name = "Superkingdom (NCBI)",
-                                  values = SHAPES,
-                                  breaks = names(SHAPES),
+                                  values = taxa_shapes,
+                                  breaks = names(taxa_shapes),
                                   na.value = 22) +
       ggplot2::labs(x = "ASV Size (bp)",
                     y = "Sample",
                     title = "ASV Identification Status",
                     subtitle = "All ASVs found in analysis, after removal from negative controls") +
       ggplot2::theme_bw(base_size = 30) +
-      ggplot2::theme(legend.title = ggplot2::element_markdown(),
+      ggplot2::theme(legend.title = ggplot2::element_text(),
                      strip.text = ggplot2::element_text(size = 24),
                      strip.text.y = ggplot2::element_text(angle = 0),
                      axis.title = ggplot2::element_text(size = 24),
@@ -4125,7 +4161,7 @@ This diagnostic visualization displays the identification status of all ASVs acr
       ggplot2::geom_hline(yintercept = seq(1.5, 
                                            length(unique(plot_data$Sample)), 
                                            1),
-                          linetype = 1, linewidth = 0.05, col = "dddddd") +
+                          linetype = 1, linewidth = 0.05, col = "#dddddd") +
       
       # Facets (matching EXACTLY)
       ggplot2::facet_grid(rows = ggplot2::vars(`Read origin`, Primer),
@@ -4149,10 +4185,10 @@ This diagnostic visualization displays the identification status of all ASVs acr
       
       # Filter for current project
       prj_data <- plot_data %>% 
-        dplyr::filter(Project %in% PRJ, Type %in% c("Sample"))
+        dplyr::filter(Project %in% PRJ, stringr::str_to_lower(Type) %in% "sample")
       n_samples <- length(unique(prj_data$Unique_File_name))
-      max_asv <- max(prj_data$`ASV Size bp`, na.rm = TRUE)
-      min_asv <- min(prj_data$`ASV Size bp`, na.rm = TRUE)
+      max_asv <- max(prj_data$`ASV Size (bp)`, na.rm = TRUE)
+      min_asv <- min(prj_data$`ASV Size (bp)`, na.rm = TRUE)
       
       # 1. Static PDF 
       pdf_file <- file.path(results_path,
@@ -4165,7 +4201,7 @@ This diagnostic visualization displays the identification status of all ASVs acr
                       height = round(n_samples * 0.5, 0) + 15,
                       units = "cm",
                       dpi = 300,
-                      limit.size = FALSE)
+                      limitsize = FALSE)
       
       # 2. Interactive Plotly HTML
       plotly_plot <- ASV_length_by_sample_BLAST_plot +

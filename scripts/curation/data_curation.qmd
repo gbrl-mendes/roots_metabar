@@ -1,0 +1,480 @@
+---
+title: "Carol Flynn's PhD Roots Metabarcoding Data Curation"
+author:
+  - "Carol Flynn"
+  - "Gabriel A. Mendes"
+format: html
+editor: visual
+editor_options:
+  chunk_output_type: console
+---
+
+# Tanguro Roots Data Curation
+
+## 1. Setup & Configuration
+
+### Packages
+
+-   **Load libraries.** Import all necessary packages for data manipulation, demultiplex, ASVs inference, taxonomy assigment and data visualization. The `florabr` package is not attached: its functions are called with the `florabr::` prefix, because attaching it masks `phyloseq::subset_species()`.
+
+    ```{r}
+    library(tidyverse)
+    library(phyloseq)
+    library(Biostrings)
+    library(ShortRead)
+    library(DECIPHER)
+    library(future)
+    library(viridis)
+    library(ggh4x)
+    library(furrr)
+    library(writexl)
+    library(tictoc)
+    library(BLASTr)
+    library(janitor)
+    library(readxl)
+    library(florabr)
+    library(rWCVP)
+    library(barRoso)
+    ```
+
+### Directory Management
+
+-   **Create directory structure.** Define project paths and create the directory structure required by the pipeline.
+
+    ```{r}
+    # Project folder path
+    prjct_path <- "/home/gabriel/projetos/roots_metabar"
+
+    # Derived paths
+    {
+      env_path <- file.path(prjct_path, "environments")
+      data_path <- file.path(prjct_path, "data")
+      pipe_libs <- file.path(data_path, "reads")
+      raw_libs <- file.path(pipe_libs, "raw")
+      paired_libs <- file.path(pipe_libs, "paired")
+      cutadapt_libs <- file.path(pipe_libs, "cutadapt")
+      qual_path <- file.path(prjct_path, "quality")
+      results_path <- file.path(prjct_path, "results")
+      figs_path <- file.path(prjct_path, "figures")
+      blast_path <- file.path(results_path, "blast")
+      swarm_path <- file.path(results_path, "swarm")
+      dmx_path <- file.path(pipe_libs, "demultiplex")
+      nochim_path <- file.path(results_path, "non_chimera")
+      tables_path <- file.path(results_path, "tables")
+      track_path <- file.path(results_path, "track_plots")
+      error_path <- file.path(results_path, "error_plot")
+    }
+
+    # Paths to be created
+    paths <- c(prjct_path, env_path, data_path, pipe_libs, raw_libs,
+               paired_libs, cutadapt_libs, qual_path, results_path,
+               figs_path, blast_path, swarm_path, dmx_path, nochim_path,
+               tables_path, track_path, error_path)
+
+    for (dir in paths) {
+      if (dir.exists(dir)) {
+    print(paste("The folder", dir, "already exists!"))
+      } else {
+    print(paste("Creating", dir, "!" ))
+    dir.create(dir)
+      }
+    }
+
+    # Files in the project folder
+    list.files(prjct_path)
+    ```
+
+## 2. Load Data and Update Core Metadata
+
+This section loads the tables and replaces the old version of these four columns by the corrected one.
+
+### Load data sheets
+
+-   **Upload data sheets.** Load the primers and samples table, the previous complete results table, and the 2026 plant inventory of the Tanguro region.
+
+    ```{r}
+    # Primers and Samples table updated
+    primers_n_samples <- read_csv(paste0(data_path, "/",
+                                         "primers_n_samples-2026-10-14.csv")) %>%
+      tibble()
+
+    # Associated Core Species Data
+    results_complete_analysis_old <-
+      read_excel(paste0(results_path, "/", "tables/",
+                        "roots_metabar--Complete_analysis_results-2026-09-01.xlsx")) %>%
+      tibble()
+
+    # Plant inventory of the Tanguro region
+    tanguro_inv <- read_csv(file.path(prjct_path, "scripts/curation/tanguro",
+                              "inventario_vegetal_2026.csv"))
+    ```
+
+### Update Metadata 28 to 31
+
+-   **Updating Complete Results Table.** Replace the old Metadata 28 to 31 columns by the corrected ones from the primers and samples table, matching rows by Metadata 32 (sample), and save the updated table.
+
+    ```{r}
+    results_complete_analysis <-
+      results_complete_analysis_old %>%
+      select(-c(`Metadata 28`,
+                `Metadata 29`,
+                `Metadata 30`,
+                `Metadata 31`)) %>%
+      left_join(primers_n_samples %>%
+                  select(c(`Metadata 28`,
+                           `Metadata 29`,
+                           `Metadata 30`,
+                           `Metadata 31`,
+                           `Metadata 32`)) %>%
+                  distinct(),
+                by = "Metadata 32")
+
+      # write_xlsx(results_complete_analysis,
+      #            path = file.path(tables_path, paste0("roots_metabar",
+      #                                                 "--Complete_analysis_results-",
+      #                                                 Sys.Date(), ".xlsx")),
+      #            col_names = TRUE, format_headers = TRUE)
+    ```
+
+-   **Check the update.** The join must not create or lose rows.
+
+    ```{r}
+    # Same number of rows before and after the join? (must be TRUE)
+    nrow(results_complete_analysis) == nrow(results_complete_analysis_old)
+
+    # Rows without corrected buffer metadata (should be 0, except control samples)
+    results_complete_analysis %>%
+      filter(is.na(`Metadata 30`)) %>%
+      dplyr::count(Type)
+    ```
+
+## 3. Flora e Funga do Brasil Database
+
+The Flora e Funga do Brasil database is used to harm_tblonize plant names (accepted name, synonyms and current family) and to obtain the life form of each species.
+
+### Download (only once)
+
+-   **Download the database.**
+
+    ```{r}
+    floradb_path <- file.path("/home/gabriel/projetos/roots_metabar/scripts/curation/flora_db/")
+    dir.create(floradb_path, showWarnings = FALSE, recursive = TRUE)
+
+    if (length(list.files(floradb_path)) == 0) {
+      florabr::get_florabr(output_dir = floradb_path, # directory to save the data
+                           data_version = "latest",   # most recent version available
+                           overwrite = TRUE)
+    } else {
+      message("Flora do Brasil data already downloaded. Skipping download.")
+    }
+    ```
+
+### Load and inspect
+
+-   **Load the database and check the columns used.** The complete version is loaded because it contains the life form column. `taxonomicStatus` tells if a name is accepted or a synonym; for synonyms, `acceptedName` holds the accepted name.
+
+    ```{r}
+    florabr_db <- florabr::load_florabr(data_dir = floradb_path, type = "complete")
+    names(florabr_db)
+
+    # Values of the columns used
+    table(florabr_db$taxonomicStatus, useNA = "ifany")
+    table(florabr_db$taxonRank, useNA = "ifany")
+    table(florabr_db$lifeForm, useNA = "ifany") %>% sort(decreasing = TRUE) %>% head(25)
+
+    # How known synonyms appear in the database
+    florabr_db %>%
+      filter(species %in% c("Moquilea egleri", "Marlierea umbraticola",
+                            "Hippocratea volubilis", "Robrichia schomburgkii")) %>%
+      select(species, taxonRank, taxonomicStatus, acceptedName, family, lifeForm)
+    ```
+
+## 4. Prepare Names
+
+### Clean names
+
+-   **Name cleaning function.** Remove asterisks, `cf.` and `aff.` qualifiers and extra spaces.
+
+    ```{r}
+    cleaning_spp <- function(x) {
+      x %>% str_remove_all("\\*+") %>%
+        str_replace_all("\\b(cf|aff)\\.", "") %>%
+        str_squish()
+    }
+    ```
+
+### Buffer in long format
+
+-   **Buffer species per core.** The results table is used as `res`. Metadata 28 to 31 are split by `|` in parallel, so each row is one species in one core. `separate_longer_delim()` stops with an error if the four columns have different numbers of items, which works as an alignment check. Species repeated in the same core have their abundances summed.
+
+    ```{r}
+    results_tbl <- results_complete_analysis
+
+    buffer_long <- results_tbl %>%
+      distinct(core = `Metadata 1`, `Metadata 28`, `Metadata 29`,
+               `Metadata 30`, `Metadata 31`) %>%
+      mutate(across(starts_with("Metadata"), as.character)) %>%
+      separate_longer_delim(c(`Metadata 28`, `Metadata 29`,
+                              `Metadata 30`, `Metadata 31`), delim = "|") %>%
+      transmute(core,
+                familia_buffer = str_squish(`Metadata 28`),
+                genero_buffer  = str_squish(`Metadata 29`),
+                especie_buffer = cleaning_spp(`Metadata 30`),
+                abund_buffer   = as.numeric(str_squish(`Metadata 31`))) %>%
+      group_by(core, familia_buffer, genero_buffer, especie_buffer) %>%
+      summarise(abund_buffer = sum(abund_buffer), .groups = "drop")
+
+    buffer_long
+    ```
+
+### Names to harmonize
+
+-   **List all names with their source.** Names come from three sources: the inventory, the buffer and the BLAST identification. Each name is classified as a species (binomial), a placeholder (`sp.`) or a name without epithet (genus or family only). Only binomials are harm_tblonized with the Flora.
+
+    ```{r}
+    spp_names <- bind_rows(tibble(original_name = tanguro_inv$species,
+                                  source = "inventario"),
+                           tibble(original_name = buffer_long$especie_buffer,
+                              source = "buffer"),
+                           tibble(original_name = results_tbl$`Final ID (NCBI)`,
+                                  source = "blast")) %>%
+      filter(!is.na(original_name),
+             !original_name == "Match_not_reliable") %>%
+      mutate(clean_name = cleaning_spp(original_name),
+             type = case_when(str_detect(clean_name, "\\bsp\\.?$") ~ "genus",
+                              str_detect(clean_name, "unknow") ~ "sem_epiteto",
+                              !str_detect(clean_name, " ") ~ "sem_epiteto",
+                              TRUE ~ "specie")) %>%
+      group_by(clean_name, type) %>%
+      summarise(original_name = paste(sort(unique(original_name)), collapse = " | "),
+                source = paste(sort(unique(source)), collapse = ";"),
+                .groups = "drop") %>% 
+      relocate(original_name,
+               type,
+               source)
+    
+    spp_names %>% 
+    dplyr::count(type)
+    ```
+
+-   **Fix genus-level names written without `sp.`.** Two names identify a genus but were not written in the `sp.` format: `Inga` (no epithet) and `Miconia unknow`. Their cleaned name is changed to `Inga sp.` and `Miconia sp.`, and their type is changed to `genus`, the same type of the other `sp.` names.
+
+    ```{r}
+    spp_names <- spp_names %>%
+      mutate(clean_name = case_when(original_name == "Inga" ~ "Inga sp.",
+                                    original_name == "Miconia unknow" ~ "Miconia sp.",
+                                    TRUE ~ clean_name))
+    
+    # Check: the corrected names, and the number of names by type
+    spp_names %>% filter(clean_name %in% c("Inga", "Miconia unknow"))
+    ```
+
+## 5. Name Harmonization (Flora e Funga do Brasil)
+
+Every name is matched to the Flora and converted to its accepted name. Family and life form are taken from the accepted name, so they are always the current ones (for example, Celastraceae instead of Hippocrateaceae).
+
+### Match names with the Flora
+
+-   **Check duplicated names in the Flora.** Only rows of rank species are used. The same binomial should not appear in more than one row; if it does, the join below would duplicate names.
+
+    ```{r}
+    florabr_spp <- florabr_db %>%
+      filter(taxonRank == "Species") %>%
+      select(species, taxonomicStatus, nomenclaturalStatus, acceptedName, family, lifeForm, origin) %>%
+      dplyr::rename(`origin_FFBr` = origin)
+
+    # Number of binomials that appear more than once (should be 0)
+    florabr_spp %>% dplyr::count(species) %>% filter(n > 1) %>% nrow()
+    ```
+
+-   **Define status and accepted name.** Names found as `Accepted` keep their own name. Names found as `Synonym` receive the accepted name. Names not found in the Flora are flagged for the spelling variants step.
+
+    ```{r}
+    harm_tbl <- spp_names %>%
+      filter(type == "specie") %>%
+      left_join(florabr_spp %>% select(species, taxonomicStatus, nomenclaturalStatus, acceptedName),
+                by = c("clean_name" = "species")) %>%
+      # status of the name in the Flora
+      mutate(status = case_when(is.na(taxonomicStatus)        ~ "not_found",
+                                taxonomicStatus == "Accepted" ~ "accepted",
+                                taxonomicStatus == "Synonym"  ~ "synonym",
+                                nomenclaturalStatus == "Orthographical_variant" ~ "orthographic_variant",
+                                TRUE                          ~ "no_status"),
+             # accepted name: the name itself, or the name the Flora points to
+             accepted_name_FFBr = case_when(status == "accepted" ~ clean_name,
+                                            status %in% c("synonym", "orthographic_variant") ~
+                                              na_if(acceptedName, ""),
+                                            TRUE ~ NA_character_)) %>%
+      select(original_name, source, clean_name, accepted_name_FFBr, status)
+    ```
+
+### Family and life form
+
+-   **Get family and life form from the accepted name.** The raw `lifeForm` value is kept for now (some species have more than one value separated by `;`). The rule that defines woody and non-woody species comes later.
+
+    ```{r}
+    florabr_accepted <- florabr_spp %>%
+      filter(taxonomicStatus == "Accepted") %>%
+      distinct(species, family, lifeForm, `origin_FFBr`)
+
+    harm_tbl <- harm_tbl %>%
+      left_join(florabr_accepted, by = c("accepted_name_FFBr" = "species")) %>%
+      relocate(clean_name, original_name, source, `origin_FFBr`)
+    ```
+
+### Checks
+
+-   **Harmonization summary.** Number of names by status, synonyms whose accepted name was not found, source of the synonyms (which list has outdated names) and the names not found in the Flora.
+
+    ```{r}
+    # Number of names by status (accepted, synonym, not_found)
+    dplyr::count(harm_tbl, status)
+
+    # Synonyms without family (accepted name not found as species)
+    harm_tbl %>% filter(status == "synonym", is.na(family)) %>% nrow()
+
+    # Where the synonyms are (blast, buffer, inventario)
+    harm_tbl %>% filter(status == "synonym") %>% dplyr::count(source)
+
+    # Names not found in the Flora (spelling variants and others)
+    harm_tbl %>% filter(status == "not_found") %>%
+      select(clean_name, source) %>% print(n = 100)
+    ```
+
+## 6. Name harm_tblonization (Plants of the World Online)
+
+The WCVP (World Checklist of Vascular Plants) is the database behind Plants of the World Online (POWO). It works here as a second opinion on the same names: it is global (the Flora covers only Brazil) and its fuzzy matching can resolve spelling variants. The Flora columns of `harm_tbl` are not changed in this section.
+
+### Match names with the WCVP
+
+-   **Match the cleaned names.** The cleaned name (`clean_name`), not the Flora accepted name, is sent to the WCVP, so the two databases are independent. The matching is done without author names, with fuzzy matching for names that fail the exact match. A name with more than one match in the WCVP gets one row per match, so the output can have more rows than the input; these names are resolved in the next step.
+
+    ```{r}
+    rWCVPdata::wcvp_version()   # WCVP version, needed for the methods
+
+    wcvp_in <- harm_tbl %>% distinct(clean_name) %>% as.data.frame()
+
+    wcvp_out <- rWCVP::wcvp_match_names(wcvp_in, name_col = "clean_name",
+                                        fuzzy = TRUE, progress_bar = FALSE)
+
+    dplyr::count(wcvp_out, match_type)
+    dplyr::count(wcvp_out, wcvp_status)
+    dplyr::count(wcvp_out, multiple_matches)
+    nrow(wcvp_in); nrow(wcvp_out)   # more rows than names = names with multiple matches
+    ```
+
+### Accepted names from the WCVP
+
+-   **Get the accepted name of each match and keep one row per name.** Each match points to an accepted name through `wcvp_accepted_id`, which is looked up in the WCVP names table. Names that are already accepted have no accepted id (or their own), so `coalesce()` covers both cases. Names with several matches are resolved with rules adapted from the rWCVP name matching vignette (the author rule is not used, because no authors were supplied):
+
+    1.  If any match is `Accepted`, only the accepted matches are considered. If none is, the synonym-type matches (`Synonym`, `Orthographic`, `Artificial Hybrid`, `Unplaced`) are considered. If there are none of those either, the remaining matches (`Illegitimate`, `Invalid`, `Misapplied`) are considered.
+    2.  If the considered matches lead to the same accepted name, the name is resolved.
+    3.  If they lead to different accepted names, the name is flagged as `ambiguo` and no accepted name is assigned; it is decided manually.
+
+    The `fuzzy` column flags names whose match was fuzzy (edit distance or phonetic).
+
+    ```{r}
+    wn <- rWCVPdata::wcvp_names
+    stopifnot(all(c("plant_name_id", "taxon_status", "taxon_name") %in% names(wn)))
+
+    wcvp_acc <- wn %>%
+      filter(taxon_status == "Accepted") %>%
+      distinct(plant_name_id, taxon_name) %>%
+      transmute(acc_id = as.character(plant_name_id),
+                nome_aceito_wcvp = taxon_name)
+
+    # One row per match, with the accepted name of each match
+    wcvp_all <- wcvp_out %>%
+      tibble::as_tibble() %>%
+      mutate(acc_id = as.character(dplyr::coalesce(wcvp_accepted_id, wcvp_id))) %>%
+      left_join(wcvp_acc, by = "acc_id") %>%
+      mutate(prioridade = case_when(
+        wcvp_status == "Accepted" ~ 1L,
+        wcvp_status %in% c("Synonym", "Orthographic",
+                           "Artificial Hybrid", "Unplaced") ~ 2L,
+        TRUE ~ 3L))
+
+    # One row per name
+    wcvp_res <- wcvp_all %>%
+      group_by(clean_name) %>%
+      filter(prioridade == min(prioridade)) %>%
+      summarise(n_aceitos = n_distinct(nome_aceito_wcvp, na.rm = TRUE),
+                nome_aceito_wcvp = if (n_aceitos == 1) dplyr::first(na.omit(nome_aceito_wcvp)) else NA_character_,
+                ambiguo = n_aceitos > 1,
+                fuzzy = any(str_detect(match_type, "Fuzzy") %in% TRUE),
+                .groups = "drop")
+
+    nrow(wcvp_res) == nrow(wcvp_in)   # must be TRUE
+    dplyr::count(wcvp_res, ambiguo, fuzzy)
+    ```
+
+-   **Review the matches that need attention.** Fuzzy matches (check if the proposal is really the same species), names with statuses outside the synonym rules, and ambiguous names (matches that lead to different accepted names).
+
+    ```{r}
+    # Fuzzy matches
+    wcvp_all %>%
+      filter(str_detect(match_type, "Fuzzy")) %>%
+      select(clean_name, match_type, match_similarity, wcvp_name,
+             wcvp_status, nome_aceito_wcvp) %>%
+      print(n = 50)
+
+    # Statuses outside the synonym rules
+    wcvp_all %>%
+      filter(wcvp_status %in% c("Illegitimate", "Invalid", "Misapplied")) %>%
+      select(clean_name, wcvp_name, wcvp_status, nome_aceito_wcvp) %>%
+      print(n = 60)
+
+    # Ambiguous names: all their matches
+    wcvp_all %>%
+      semi_join(wcvp_res %>% filter(ambiguo), by = "clean_name") %>%
+      select(clean_name, wcvp_name, wcvp_status, nome_aceito_wcvp) %>%
+      print(n = 100)
+    ```
+
+## 7. Final harm_tblonization Table
+
+-   **Join the Flora and WCVP results.** The final table keeps all the Flora columns of `harm_tbl` and adds the accepted name proposed by the WCVP and a column that compares the two accepted names (`nome_aceito` from the Flora and `nome_aceito_wcvp`):
+
+    -   `concordam`: both databases propose the same accepted name.
+    -   `diferentes`: both propose an accepted name, but they are different.
+    -   `so_flora`: only the Flora proposes an accepted name.
+    -   `so_wcvp`: only the WCVP proposes an accepted name (Flora status `nao_encontrado`).
+    -   `nenhum`: neither database proposes an accepted name.
+    -   `wcvp_ambiguo`: the WCVP has more than one match leading to different accepted names, so no WCVP name is assigned.
+
+    ```{r}
+    harm_tbl_final <- harm_tbl %>%
+      left_join(wcvp_res %>% select(clean_name, nome_aceito_wcvp, ambiguo),
+                by = "clean_name") %>%
+      mutate(concordancia = case_when(
+        ambiguo %in% TRUE                            ~ "wcvp_ambiguo",
+        is.na(nome_aceito) & is.na(nome_aceito_wcvp) ~ "nenhum",
+        is.na(nome_aceito)                           ~ "so_wcvp",
+        is.na(nome_aceito_wcvp)                      ~ "so_flora",
+        nome_aceito == nome_aceito_wcvp              ~ "concordam",
+        TRUE                                         ~ "diferentes")) %>%
+      select(-ambiguo) %>%
+      relocate(nome_aceito_wcvp, concordancia, .after = lifeForm)
+
+    nrow(harm_tbl_final) == nrow(harm_tbl)   # must be TRUE
+    ```
+
+-   **Check the agreement.** Number of names in each category, and the names that need a decision: where the databases differ and where only the WCVP resolved the name. Keep in mind that a `so_wcvp` name may come from a fuzzy match; the `fuzzy` column is kept in `wcvp_res`.
+
+    ```{r}
+    dplyr::count(harm_tbl_final, concordancia)
+
+    harm_tbl_final %>%
+      filter(concordancia %in% c("diferentes", "so_wcvp", "wcvp_ambiguo")) %>%
+      select(nomes_originais, fontes, nome_aceito, nome_aceito_wcvp, concordancia) %>%
+      print(n = 100)
+    ```
+
+### Export
+
+-   **Save the harm_tblonization table.** Contains the original name, source, origin, status, accepted name, family and life form from the Flora, the accepted name proposed by the WCVP and the agreement between the two databases.
+
+    ```{r}
+    write_csv(harm_tbl_final, file.path(tables_path,
+                                    paste0("harm_tblonization_table-",Sys.Date(), ".csv")))
+    ```
