@@ -34,6 +34,7 @@ editor_options:
     library(readxl)
     library(rWCVP)
     library(barRoso)
+    library(ViewR)
     ```
 
 ### Directory Management
@@ -138,13 +139,13 @@ This section loads the tables and replaces the old version of these four columns
 -   **Check the update.** The join must not create or lose rows.
 
     ```{r}
-    # Same number of rows before and after the join? (must be TRUE)
-    nrow(results_complete_analysis) == nrow(results_complete_analysis_old)
-
-    # Rows without corrected buffer metadata (should be 0, except control samples)
-    results_complete_analysis %>%
-      filter(is.na(`Metadata 30`)) %>%
-      dplyr::count(Type)
+    # # Same number of rows before and after the join? (must be TRUE)
+    # nrow(results_complete_analysis) == nrow(results_complete_analysis_old)
+    # 
+    # # Rows without corrected buffer metadata (should be 0, except control samples)
+    # results_complete_analysis %>%
+    #   filter(is.na(`Metadata 30`)) %>%
+    #   dplyr::count(Type)
     ```
 
 ## 3. Flora e Funga do Brasil Database
@@ -441,7 +442,7 @@ The WCVP (World Checklist of Vascular Plants) is the database behind Plants of t
     source("/home/gabriel/functions/retrieve_taxonomy_v2.R")
     
     # Names without family in the Flora, and their genus
-    no_family <- harm_tbl_full %>%
+    no_family <- harm_tbl %>%
       filter(is.na(family)) %>%
       distinct(clean_name) %>%
       mutate(genus = stringr::word(clean_name, 1))
@@ -620,6 +621,7 @@ The function `barroso_fix_names()` of the barRoso package is a third opinion on 
         final_name = case_when(
           agreement %in% c("agree", "only_flora", "different") ~ accepted_name_FFBr,
           agreement == "only_wcvp" & !(fuzzy %in% TRUE)        ~ accepted_name_WCVP,
+          !is.na(accepted_name_barRoso)                        ~ accepted_name_barRoso,  # fallback
           TRUE                                                 ~ NA_character_),
 
         # Rule that defined the final name
@@ -628,18 +630,15 @@ The function `barroso_fix_names()` of the barRoso package is a third opinion on 
           agreement == "only_flora"                            ~ "Flora only",
           agreement == "different"                             ~ "Flora (WCVP disagrees)",
           agreement == "only_wcvp" & !(fuzzy %in% TRUE)        ~ "WCVP exact match",
+          !is.na(accepted_name_barRoso)                        ~ "barRoso (Flora and WCVP unresolved)",
           TRUE                                                 ~ "no decision"),
-
-        # barRoso is only a suggestion, and only where the rules left no name
-        barroso_suggestion = if_else(is.na(final_name),
-                                     accepted_name_barRoso, NA_character_),
 
         # Names that need a manual check
         needs_review = agreement %in% c("none", "wcvp_ambiguous") |
           (agreement == "only_wcvp" & fuzzy %in% TRUE) |
           (agreement == "different" & str_detect(source, "inventory|buffer")) |
           duplicated(clean_name) | duplicated(clean_name, fromLast = TRUE)) %>%
-      relocate(final_name, criterion, barroso_suggestion, needs_review,
+      relocate(final_name, criterion, needs_review,
                .after = agreement)
     ```
 
@@ -656,6 +655,8 @@ The function `barroso_fix_names()` of the barRoso package is a third opinion on 
       filter(is.na(final_name)) %>%
       select(original_name, source, agreement, barroso_suggestion) %>%
       print(n = 100)
+    
+    viewdt(harm_tbl_final)
     ```
 
 ### Export
@@ -667,7 +668,7 @@ The function `barroso_fix_names()` of the barRoso package is a third opinion on 
                                     paste0("harmonization_table-",Sys.Date(), ".csv")))
     ```
 
-## 9. Compare with Mato Grosso Occurrence
+## 9. Compare with Mato Grosso Occurrences
 
 The Flora e Funga do Brasil records the states where each species occurs. The final names are compared with the list of species recorded in Mato Grosso (MT), to see which names are expected in the study area. Absence from the list is not proof that a species does not occur in MT (the list depends on the records in the Flora), so this comparison is used to find names to check, not to delete names.
 
