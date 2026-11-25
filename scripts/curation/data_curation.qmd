@@ -32,7 +32,6 @@ editor_options:
     library(BLASTr)
     library(janitor)
     library(readxl)
-    library(florabr)
     library(rWCVP)
     library(barRoso)
     ```
@@ -150,7 +149,7 @@ This section loads the tables and replaces the old version of these four columns
 
 ## 3. Flora e Funga do Brasil Database
 
-The Flora e Funga do Brasil database is used to harm_tblonize plant names (accepted name, synonyms and current family) and to obtain the life form of each species.
+The Flora e Funga do Brasil database is used to harmonize plant names (accepted name, synonyms and current family) and to obtain the life form of each species.
 
 ### Download (only once)
 
@@ -217,11 +216,11 @@ The Flora e Funga do Brasil database is used to harm_tblonize plant names (accep
       separate_longer_delim(c(`Metadata 28`, `Metadata 29`,
                               `Metadata 30`, `Metadata 31`), delim = "|") %>%
       transmute(core,
-                familia_buffer = str_squish(`Metadata 28`),
-                genero_buffer  = str_squish(`Metadata 29`),
-                especie_buffer = cleaning_spp(`Metadata 30`),
+                family_buffer  = str_squish(`Metadata 28`),
+                genus_buffer   = str_squish(`Metadata 29`),
+                species_buffer = cleaning_spp(`Metadata 30`),
                 abund_buffer   = as.numeric(str_squish(`Metadata 31`))) %>%
-      group_by(core, familia_buffer, genero_buffer, especie_buffer) %>%
+      group_by(core, family_buffer, genus_buffer, species_buffer) %>%
       summarise(abund_buffer = sum(abund_buffer), .groups = "drop")
 
     buffer_long
@@ -229,12 +228,12 @@ The Flora e Funga do Brasil database is used to harm_tblonize plant names (accep
 
 ### Names to harmonize
 
--   **List all names with their source.** Names come from three sources: the inventory, the buffer and the BLAST identification. Each name is classified as a species (binomial), a placeholder (`sp.`) or a name without epithet (genus or family only). Only binomials are harm_tblonized with the Flora.
+-   **List all names with their source.** Names come from three sources: the inventory, the buffer and the BLAST identification. Each name is classified as a species (binomial), a placeholder (`sp.`) or a name without epithet (genus or family only). Only binomials are harmonized with the Flora.
 
     ```{r}
     spp_names <- bind_rows(tibble(original_name = tanguro_inv$species,
-                                  source = "inventario"),
-                           tibble(original_name = buffer_long$especie_buffer,
+                                  source = "inventory"),
+                           tibble(original_name = buffer_long$species_buffer,
                               source = "buffer"),
                            tibble(original_name = results_tbl$`Final ID (NCBI)`,
                                   source = "blast")) %>%
@@ -242,9 +241,9 @@ The Flora e Funga do Brasil database is used to harm_tblonize plant names (accep
              !original_name == "Match_not_reliable") %>%
       mutate(clean_name = cleaning_spp(original_name),
              type = case_when(str_detect(clean_name, "\\bsp\\.?$") ~ "genus",
-                              str_detect(clean_name, "unknow") ~ "sem_epiteto",
-                              !str_detect(clean_name, " ") ~ "sem_epiteto",
-                              TRUE ~ "specie")) %>%
+                              str_detect(clean_name, "unknow") ~ "no_epithet",
+                              !str_detect(clean_name, " ") ~ "no_epithet",
+                              TRUE ~ "species")) %>%
       group_by(clean_name, type) %>%
       summarise(original_name = paste(sort(unique(original_name)), collapse = " | "),
                 source = paste(sort(unique(source)), collapse = ";"),
@@ -291,7 +290,7 @@ Every name is matched to the Flora and converted to its accepted name. Family an
 
     ```{r}
     harm_tbl <- spp_names %>%
-      filter(type == "specie") %>%
+      filter(type == "species") %>%
       left_join(florabr_spp %>% select(species, taxonomicStatus, nomenclaturalStatus, acceptedName),
                 by = c("clean_name" = "species")) %>%
       # status of the name in the Flora
@@ -333,7 +332,7 @@ Every name is matched to the Flora and converted to its accepted name. Family an
     # Synonyms without family (accepted name not found as species)
     harm_tbl %>% filter(status == "synonym", is.na(family)) %>% nrow()
 
-    # Where the synonyms are (blast, buffer, inventario)
+    # Where the synonyms are (blast, buffer, inventory)
     harm_tbl %>% filter(status == "synonym") %>% dplyr::count(source)
 
     # Names not found in the Flora (spelling variants and others)
@@ -341,7 +340,7 @@ Every name is matched to the Flora and converted to its accepted name. Family an
       select(clean_name, source) %>% print(n = 100)
     ```
 
-## 6. Name harm_tblonization (Plants of the World Online)
+## 6. Name harmonization (Plants of the World Online)
 
 The WCVP (World Checklist of Vascular Plants) is the database behind Plants of the World Online (POWO). It works here as a second opinion on the same names: it is global (the Flora covers only Brazil) and its fuzzy matching can resolve spelling variants. The Flora columns of `harm_tbl` are not changed in this section.
 
@@ -369,7 +368,7 @@ The WCVP (World Checklist of Vascular Plants) is the database behind Plants of t
 
     1.  If any match is `Accepted`, only the accepted matches are considered. If none is, the synonym-type matches (`Synonym`, `Orthographic`, `Artificial Hybrid`, `Unplaced`) are considered. If there are none of those either, the remaining matches (`Illegitimate`, `Invalid`, `Misapplied`) are considered.
     2.  If the considered matches lead to the same accepted name, the name is resolved.
-    3.  If they lead to different accepted names, the name is flagged as `ambiguo` and no accepted name is assigned; it is decided manually.
+    3.  If they lead to different accepted names, the name is flagged as `ambiguous` and no accepted name is assigned; it is decided manually.
 
     The `fuzzy` column flags names whose match was fuzzy (edit distance or phonetic).
 
@@ -381,14 +380,14 @@ The WCVP (World Checklist of Vascular Plants) is the database behind Plants of t
       filter(taxon_status == "Accepted") %>%
       distinct(plant_name_id, taxon_name) %>%
       transmute(acc_id = as.character(plant_name_id),
-                nome_aceito_wcvp = taxon_name)
+                accepted_name_WCVP = taxon_name)
 
     # One row per match, with the accepted name of each match
     wcvp_all <- wcvp_out %>%
       tibble::as_tibble() %>%
       mutate(acc_id = as.character(dplyr::coalesce(wcvp_accepted_id, wcvp_id))) %>%
       left_join(wcvp_acc, by = "acc_id") %>%
-      mutate(prioridade = case_when(
+      mutate(priority = case_when(
         wcvp_status == "Accepted" ~ 1L,
         wcvp_status %in% c("Synonym", "Orthographic",
                            "Artificial Hybrid", "Unplaced") ~ 2L,
@@ -397,15 +396,15 @@ The WCVP (World Checklist of Vascular Plants) is the database behind Plants of t
     # One row per name
     wcvp_res <- wcvp_all %>%
       group_by(clean_name) %>%
-      filter(prioridade == min(prioridade)) %>%
-      summarise(n_aceitos = n_distinct(nome_aceito_wcvp, na.rm = TRUE),
-                nome_aceito_wcvp = if (n_aceitos == 1) dplyr::first(na.omit(nome_aceito_wcvp)) else NA_character_,
-                ambiguo = n_aceitos > 1,
+      filter(priority == min(priority)) %>%
+      summarise(n_accepted = n_distinct(accepted_name_WCVP, na.rm = TRUE),
+                accepted_name_WCVP = if (n_accepted == 1) dplyr::first(na.omit(accepted_name_WCVP)) else NA_character_,
+                ambiguous = n_accepted > 1,
                 fuzzy = any(str_detect(match_type, "Fuzzy") %in% TRUE),
                 .groups = "drop")
 
     nrow(wcvp_res) == nrow(wcvp_in)   # must be TRUE
-    dplyr::count(wcvp_res, ambiguo, fuzzy)
+    dplyr::count(wcvp_res, ambiguous, fuzzy)
     ```
 
 -   **Review the matches that need attention.** Fuzzy matches (check if the proposal is really the same species), names with statuses outside the synonym rules, and ambiguous names (matches that lead to different accepted names).
@@ -415,66 +414,308 @@ The WCVP (World Checklist of Vascular Plants) is the database behind Plants of t
     wcvp_all %>%
       filter(str_detect(match_type, "Fuzzy")) %>%
       select(clean_name, match_type, match_similarity, wcvp_name,
-             wcvp_status, nome_aceito_wcvp) %>%
+             wcvp_status, accepted_name_WCVP) %>%
       print(n = 50)
 
     # Statuses outside the synonym rules
     wcvp_all %>%
       filter(wcvp_status %in% c("Illegitimate", "Invalid", "Misapplied")) %>%
-      select(clean_name, wcvp_name, wcvp_status, nome_aceito_wcvp) %>%
+      select(clean_name, wcvp_name, wcvp_status, accepted_name_WCVP) %>%
       print(n = 60)
 
     # Ambiguous names: all their matches
     wcvp_all %>%
-      semi_join(wcvp_res %>% filter(ambiguo), by = "clean_name") %>%
-      select(clean_name, wcvp_name, wcvp_status, nome_aceito_wcvp) %>%
+      semi_join(wcvp_res %>% filter(ambiguous), by = "clean_name") %>%
+      select(clean_name, wcvp_name, wcvp_status, accepted_name_WCVP) %>%
       print(n = 100)
     ```
 
-## 7. Final harm_tblonization Table
+## 7. Name Harmonization (barRoso)
 
--   **Join the Flora and WCVP results.** The final table keeps all the Flora columns of `harm_tbl` and adds the accepted name proposed by the WCVP and a column that compares the two accepted names (`nome_aceito` from the Flora and `nome_aceito_wcvp`):
+### Retrieve Complete Taxonomy
 
-    -   `concordam`: both databases propose the same accepted name.
-    -   `diferentes`: both propose an accepted name, but they are different.
-    -   `so_flora`: only the Flora proposes an accepted name.
-    -   `so_wcvp`: only the WCVP proposes an accepted name (Flora status `nao_encontrado`).
-    -   `nenhum`: neither database proposes an accepted name.
-    -   `wcvp_ambiguo`: the WCVP has more than one match leading to different accepted names, so no WCVP name is assigned.
+-   **Search missing TaxIDs.** Extract genus/species names from subject headers for hits lacking TaxIDs across all databases, and execute an interactive NCBI query using the `retrieve_taxid.R` function.
 
     ```{r}
-    harm_tbl_final <- harm_tbl %>%
-      left_join(wcvp_res %>% select(clean_name, nome_aceito_wcvp, ambiguo),
-                by = "clean_name") %>%
-      mutate(concordancia = case_when(
-        ambiguo %in% TRUE                            ~ "wcvp_ambiguo",
-        is.na(nome_aceito) & is.na(nome_aceito_wcvp) ~ "nenhum",
-        is.na(nome_aceito)                           ~ "so_wcvp",
-        is.na(nome_aceito_wcvp)                      ~ "so_flora",
-        nome_aceito == nome_aceito_wcvp              ~ "concordam",
-        TRUE                                         ~ "diferentes")) %>%
-      select(-ambiguo) %>%
-      relocate(nome_aceito_wcvp, concordancia, .after = lifeForm)
-
-    nrow(harm_tbl_final) == nrow(harm_tbl)   # must be TRUE
+    source("/home/gabriel/functions/retrieve_taxid.R")
+    source("/home/gabriel/functions/retrieve_taxonomy_v2.R")
+    
+    # Names without family in the Flora, and their genus
+    no_family <- harm_tbl_full %>%
+      filter(is.na(family)) %>%
+      distinct(clean_name) %>%
+      mutate(genus = stringr::word(clean_name, 1))
+    
+    # One request per unique genus
+    unique_organism_names <- unique(no_family$genus[!is.na(no_family$genus) & no_family$genus != ""])
+    
+    # Search missing TaxIDs
+    {
+      message("========================================")
+      message("TaxID lookup for names without family")
+      message("========================================")
+      message("  ", nrow(no_family), " names without family; ",
+              
+              length(unique_organism_names), " unique genera to query")
+      if (length(unique_organism_names) > 0) {
+        taxid_df <- retrieve_taxid(unique_organism_names, ask = TRUE)
+        } else {
+          taxid_df <- data.frame(genus = character(),
+                                 uid = character(),
+                                 stringsAsFactors = FALSE)
+        }
+      }
+    
+    # Does still has genera without TaxID?
+    setdiff(unique_organism_names, taxid_df$genus[!is.na(taxid_df$uid)])
     ```
 
--   **Check the agreement.** Number of names in each category, and the names that need a decision: where the databases differ and where only the WCVP resolved the name. Keep in mind that a `so_wcvp` name may come from a fuzzy match; the `fuzzy` column is kept in `wcvp_res`.
+-   **Retrieve complete taxonomy.** Retrieve complete taxonomy from TaxIDs.
 
     ```{r}
-    dplyr::count(harm_tbl_final, concordancia)
+    # Complete taxonomy of the genera found
+    taxonomy_ncbi <- retrieve_taxonomy(taxid_df %>%
+                                         filter(!is.na(uid)) %>%
+                                         distinct(genus, uid)) %>%
+      distinct()
+    
+    stopifnot("family" %in% names(taxonomy_ncbi))
+    
+    # One family per genus
+    genus_family <- taxid_df %>%
+      mutate(uid = as.character(uid)) %>%
+      left_join(taxonomy_ncbi %>%
+                  mutate(uid = as.character(uid)) %>%
+                  distinct(uid, family_NCBI = family),
+                by = "uid") %>%
+      distinct(genus, taxid = uid, family_NCBI)
+    
+    genus_family %>% dplyr::count(genus) %>% filter(n > 1)   # must be empty
+    
+    # Table with TaxID and the NCBI family of the names without family in the Flora
+    harm_tbl_fml <- harm_tbl %>%
+      mutate(genus = stringr::word(clean_name, 1)) %>%
+      left_join(genus_family, by = "genus") %>%
+      mutate(taxid = if_else(is.na(family), taxid, NA_character_),
+             family_NCBI = if_else(is.na(family), family_NCBI, NA_character_)) %>%
+      select(-genus)
+    
+    nrow(harm_tbl_fml) == nrow(harm_tbl)   # must be TRUE
+    
+    # Merge family columns
+    harm_tbl_full <- harm_tbl_fml %>% 
+      filter(!(is.na(family) & is.na(family_NCBI))) %>% 
+      unite("family",
+            family, family_NCBI,
+            na.rm = TRUE) %>% 
+      bind_rows(harm_tbl_fml %>% 
+                   filter(is.na(family) & is.na(family_NCBI)) %>% 
+                   select(-c(family_NCBI)))
+    
+    # Names still without family (neither Flora nor NCBI)
+    harm_tbl_full %>% filter(is.na(family)) %>%
+      select(clean_name, source) %>% print(n = 50)
+    ```
+
+The function `barroso_fix_names()` of the barRoso package is a third opinion on the same names. It combines the two databases used above: names found in the Flora e Funga do Brasil follow the Flora, and the other names follow the WCVP (through the packages floraR and expowo). Misspelled names are matched to the closest name of the same genus, with a relative distance of the epithet up to `max_distance`. Only the accepted name proposed by barRoso is kept; the Flora and WCVP columns of `harm_tbl` are not changed in this section.
+
+### Prepare and run
+
+-   **Build the input table.** `barroso_fix_names()` works on herbarium records and needs the family, the genus and the specific epithet in separate columns, so each cleaned name is split into genus and epithet. The family is the one from the Flora; names without family in the Flora (`not_found`) get the family from the Flora search made by barRoso itself, and names that are not in the Flora and have no family are not searched in the WCVP (they return `not found`).
+
+    ```{r}
+    # One row per name, with family, genus and specific epithet
+    barroso_in <- harm_tbl_full %>%
+      filter(!is.na(family)) %>% 
+      distinct(clean_name, family) %>%
+      transmute(clean_name,
+                family,
+                genus           = word(clean_name, 1),
+                specificEpithet = word(clean_name, 2))
+    ```
+
+-   **Fix the names.** The function replaces `genus` and `specificEpithet` by the accepted name and adds `taxonOriginal` (the name before the correction), `taxonStatus` (`accepted`, `synonym`, `misspelled`, `misspelled synonym`, `ambiguous` or `not found`) and `taxonSource` (`FFB` or `WCVP`). The first run downloads the WCVP (expowo) and the Flora (floraR) into cache folders, so it takes longer.
+
+    ```{r}
+    barroso_out <- barRoso::barroso_fix_names(barroso_in,
+                                              flora_brasil = TRUE,  # Flora first, then WCVP
+                                              max_distance = 0.2,   # default of the function
+                                              verbose = TRUE)
+
+    nrow(barroso_out) == nrow(barroso_in)   # must be TRUE
+
+    # Number of names by status and by source
+    dplyr::count(barroso_out, taxonStatus, taxonSource)
+    ```
+
+### Accepted names from barRoso
+
+-   **Keep only the name defined by barRoso.** The accepted name is the genus and epithet returned by the function. Names with status `ambiguous` or `not found` are returned unchanged by the function, so they get `NA` instead of their own name.
+
+    ```{r}
+    barroso_res <- barroso_out %>%
+      mutate(accepted_name_barRoso = case_when(
+        taxonStatus %in% c("accepted", "synonym",
+                           "misspelled", "misspelled synonym") ~ paste(genus, specificEpithet),
+        TRUE ~ NA_character_)) %>%
+      select(clean_name, accepted_name_barRoso)
+    ```
+
+## 8. Final Harmonization Table
+
+-   **Join the Flora, WCVP and barRoso results.** The final table keeps all the Flora columns of `harm_tbl` and adds the accepted name proposed by the WCVP, the accepted name proposed by barRoso (`accepted_name_barRoso`) and a column that compares the Flora and WCVP accepted names (`accepted_name_FFBr` and `accepted_name_WCVP`):
+
+    -   `agree`: both databases propose the same accepted name.
+    -   `different`: both propose an accepted name, but they are different.
+    -   `only_flora`: only the Flora proposes an accepted name.
+    -   `only_wcvp`: only the WCVP proposes an accepted name (Flora status `not_found` or `no_status`).
+    -   `none`: neither database proposes an accepted name.
+    -   `wcvp_ambiguous`: the WCVP has more than one match leading to different accepted names, so no WCVP name is assigned.
+
+    ```{r}
+    harm_tbl_final <- harm_tbl_full %>%
+      left_join(wcvp_res %>% select(clean_name, accepted_name_WCVP, ambiguous, fuzzy),
+                by = "clean_name") %>%
+      left_join(barroso_res, by = "clean_name") %>%
+      mutate(agreement = case_when(ambiguous %in% TRUE                                    ~ "wcvp_ambiguous",
+                                   is.na(accepted_name_FFBr) & is.na(accepted_name_WCVP) ~ "none",
+                                   is.na(accepted_name_FFBr)                             ~ "only_wcvp",
+                                   is.na(accepted_name_WCVP)                             ~ "only_flora",
+                                   accepted_name_FFBr == accepted_name_WCVP              ~ "agree",
+                                   TRUE                                                  ~ "different")) %>%
+      # select(ambiguous) %>%
+      relocate(accepted_name_WCVP, 
+               accepted_name_barRoso,
+               agreement, .after = lifeForm)
+
+    nrow(harm_tbl_final) == nrow(harm_tbl_full)   # must be TRUE
+    ```
+
+-   **Check the agreement.** Number of names in each category, and the names that need a decision: where the databases differ and where only the WCVP resolved the name. Keep in mind that an `only_wcvp` name may come from a fuzzy match; the `fuzzy` column flags these names.
+
+    ```{r}
+    dplyr::count(harm_tbl_final, agreement)
 
     harm_tbl_final %>%
-      filter(concordancia %in% c("diferentes", "so_wcvp", "wcvp_ambiguo")) %>%
-      select(nomes_originais, fontes, nome_aceito, nome_aceito_wcvp, concordancia) %>%
+      filter(agreement %in% c("different", "only_wcvp", "wcvp_ambiguous")) %>%
+      select(original_name, source, accepted_name_FFBr, accepted_name_WCVP,
+             accepted_name_barRoso, agreement) %>%
+      print(n = 100)
+    ```
+
+### Final Name
+
+-   **Define the final name.** The final name is the accepted name used in the next steps. It is defined by the same rules for every name, whatever its source (inventory, buffer or BLAST), using the agreement category of the previous step:
+
+    -   `agree`, `only_flora` and `different`: the Flora name is used. When the two databases propose different names, the Flora wins because it is the regional authority, curated by specialists in each plant group, while the WCVP is global. The WCVP proposal is not lost: it stays in `accepted_name_WCVP`.
+    -   `only_wcvp`: the WCVP name is used only when the match was exact. A fuzzy match measures similarity of text, not taxonomic identity, so it is not accepted without review.
+    -   `none`, `wcvp_ambiguous` and fuzzy `only_wcvp`: no final name (`NA`). The original name is not kept as a fallback, so these names stay out of the next steps until they are resolved.
+
+    barRoso does not take part in the decision: it is built on the same two databases, so it is not an independent opinion. Where `final_name` is `NA`, its accepted name is stored in `barroso_suggestion`, as a candidate for the reviewer and not as an answer. The column `criterion` records the rule that defined each name (useful for the methods) and `needs_review` flags the names that need a manual check: unresolved names, fuzzy matches, `different` names from the inventory or buffer (the Flora decides, but these are the ones to confirm) and duplicated names (homonyms, which the name alone cannot resolve; each row receives its own final name until one is chosen).
+
+    ```{r}
+    harm_tbl_final <- harm_tbl_final %>%
+      mutate(
+        # Accepted name used in the next steps (NA = unresolved)
+        final_name = case_when(
+          agreement %in% c("agree", "only_flora", "different") ~ accepted_name_FFBr,
+          agreement == "only_wcvp" & !(fuzzy %in% TRUE)        ~ accepted_name_WCVP,
+          TRUE                                                 ~ NA_character_),
+
+        # Rule that defined the final name
+        criterion = case_when(
+          agreement == "agree"                                 ~ "Flora = WCVP",
+          agreement == "only_flora"                            ~ "Flora only",
+          agreement == "different"                             ~ "Flora (WCVP disagrees)",
+          agreement == "only_wcvp" & !(fuzzy %in% TRUE)        ~ "WCVP exact match",
+          TRUE                                                 ~ "no decision"),
+
+        # barRoso is only a suggestion, and only where the rules left no name
+        barroso_suggestion = if_else(is.na(final_name),
+                                     accepted_name_barRoso, NA_character_),
+
+        # Names that need a manual check
+        needs_review = agreement %in% c("none", "wcvp_ambiguous") |
+          (agreement == "only_wcvp" & fuzzy %in% TRUE) |
+          (agreement == "different" & str_detect(source, "inventory|buffer")) |
+          duplicated(clean_name) | duplicated(clean_name, fromLast = TRUE)) %>%
+      relocate(final_name, criterion, barroso_suggestion, needs_review,
+               .after = agreement)
+    ```
+
+-   **Check the final names.** The join must not create or lose rows. Number of names by rule and review flag, and the unresolved names with the barRoso suggestion (when there is one).
+
+    ```{r}
+    nrow(harm_tbl_final) == nrow(harm_tbl_full)   # must be TRUE
+
+    # Number of names by rule and review flag
+    dplyr::count(harm_tbl_final, criterion, needs_review)
+
+    # Unresolved names, with the barRoso suggestion
+    harm_tbl_final %>%
+      filter(is.na(final_name)) %>%
+      select(original_name, source, agreement, barroso_suggestion) %>%
       print(n = 100)
     ```
 
 ### Export
 
--   **Save the harm_tblonization table.** Contains the original name, source, origin, status, accepted name, family and life form from the Flora, the accepted name proposed by the WCVP and the agreement between the two databases.
+-   **Save the harmonization table.** Contains the original name, source, origin, status, accepted name, family and life form from the Flora, the accepted names proposed by the WCVP and by barRoso, the agreement between the Flora and the WCVP, and the final name with the rule that defined it, the barRoso suggestion for unresolved names and the review flag.
 
     ```{r}
     write_csv(harm_tbl_final, file.path(tables_path,
-                                    paste0("harm_tblonization_table-",Sys.Date(), ".csv")))
+                                    paste0("harmonization_table-",Sys.Date(), ".csv")))
+    ```
+
+## 9. Compare with Mato Grosso Occurrence
+
+The Flora e Funga do Brasil records the states where each species occurs. The final names are compared with the list of species recorded in Mato Grosso (MT), to see which names are expected in the study area. Absence from the list is not proof that a species does not occur in MT (the list depends on the records in the Flora), so this comparison is used to find names to check, not to delete names.
+
+-   **List the species of MT.** Select from the Flora the accepted species with occurrence in MT (`filter_state = "in"`: any occurrence in the state, even if the species also occurs in other states). Cultivated and naturalized species are kept (`origin = "All"`), because the inventory and the buffer include them. The valid values of `state` can be listed with `get_attributes()`, and `stopifnot()` stops the code if the selection comes back empty.
+
+    ```{r}
+    # Accepted species with occurrence in MT
+    # (valid values of 'state': florabr::get_attributes(florabr_db, attribute = "states"))
+    spp_mt <- florabr::select_species(data = florabr_db,
+                                      include_subspecies = FALSE,
+                                      include_variety = FALSE,
+                                      state = "MT", filter_state = "in",
+                                      origin = "All",
+                                      taxonomicStatus = "Accepted") %>%
+      select(species, family, lifeForm, origin)
+
+    stopifnot(nrow(spp_mt) > 0)
+    nrow(spp_mt)
+    ```
+
+-   **Compare the final names with the list of MT.** Each final name is searched in the list of MT. Names from the WCVP with an infraspecific rank (`subsp.`, `var.` or `f.`) are reduced to the species before the comparison, since the list has only species. `in_MT` is `NA` for names without a final name. `from_field` is `TRUE` when the name was recorded in the inventory or the buffer (at least one of them) and `FALSE` when it comes only from BLAST.
+
+    ```{r}
+    harm_tbl_mt <- harm_tbl_final %>%
+      mutate(
+        # Species of the final name (infraspecific rank removed)
+        name_to_compare = str_remove(final_name, "\\s+(subsp|var|f)\\.\\s+.*$"),
+
+        # Is the species in the list of MT?
+        in_MT = case_when(is.na(final_name)                   ~ NA,
+                          name_to_compare %in% spp_mt$species ~ TRUE,
+                          TRUE                                ~ FALSE),
+
+        # Recorded in the field (inventory or buffer) or BLAST only?
+        from_field = str_detect(source, "inventory|buffer"))
+
+    nrow(harm_tbl_mt) == nrow(harm_tbl_final)   # must be TRUE
+    ```
+
+-   **Review the comparison.** Number of names in and out of MT by type of source. The field names that are not in MT are the ones to check: either the Flora has no record of the species in the state, or the name is not the current one. The BLAST-only names outside MT are the group for the next step.
+
+    ```{r}
+    # Number of names in MT by type of source
+    dplyr::count(harm_tbl_mt, from_field, in_MT)
+
+    # Field names (inventory or buffer) that are not in MT
+    harm_tbl_mt %>%
+      filter(from_field, in_MT %in% FALSE) %>%
+      select(original_name, final_name, source, criterion) %>%
+      print(n = 100)
     ```
